@@ -1,28 +1,13 @@
-﻿"""
-GBP vs Sample-based MPPI 수렴성 비교 실험
-(비선형 "이항" 팩터 및 루프 포함)
-
-[실험 케이스 (총 8개)]
-- 팩터 타입 (Binary Factor):
-  - linear: f(a,b) = a - b
-  - sin:    f(a,b) = sin(a) + sin(b)
-  - quad:   f(a,b) = a^2 + b^2
-  - exp:    f(a,b) = exp(a/3) + exp(b/3)
-- 구조 타입 (Structure):
-  - _chain (루프 없음)
-  - _loop (루프 있음)
-"""
-
-import numpy as np
+﻿import numpy as np
 import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Callable
 import time
 
-# GBP 방식
+# GBP Method
 from fg.gaussian import Gaussian
 from fg.factor_graph import VNode, FNode, FactorGraph
 
-# Sample-based MPPI 방식
+# MPPI Method
 from fg.factor_graph_mppi import SampleMessage, SampleVNode, SampleFNode, SampleFactorGraph
 
 

@@ -1,12 +1,8 @@
-# factor_graph_mppi.py
 import numpy as np
 from typing import List, Dict, Iterable, Tuple
 import itertools
 from .graph import Node, Edge, Graph
 
-# ---------------------------
-# SampleMessage: 입자 기반 메시지 표현
-# ---------------------------
 class SampleMessage:
     """
     samples: (N, D) np.ndarray
@@ -149,9 +145,8 @@ class SampleVNode(Node):
                     mp = m.project(common)
                     base = base.multiply_with(mp)
                 else:
-                    # fallback: ignore incompatible message (could be improved)
                     continue
-        # 재샘플링으로 표본 수 고정
+
         base = base.resample(base.N, jitter=1e-4)
         self._belief = base
         return self._belief.copy()
@@ -199,7 +194,6 @@ class SampleFNode(Node):
         self._dims = dims
         # factor_samples는 joint samples over dims
         if factor_samples is None:
-            # 초기: 약한 균등(zeros)
             N = 400
             samples = np.zeros((N, len(dims)))
             factor_samples = SampleMessage(dims, samples, np.ones(N)/N)
