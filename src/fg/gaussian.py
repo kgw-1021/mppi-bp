@@ -6,6 +6,7 @@ class Gaussian:
     def __init__(self, dims: list, mean: np.ndarray = None, cov: np.ndarray = None):
         self._dims = list(dims)
         self._info, self._prec = None, None
+        self.epsilon = 1e-8  
 
         if mean is not None and cov is not None:
             mean = np.array(mean)
@@ -48,10 +49,12 @@ class Gaussian:
 
     @property
     def mean(self) -> np.ndarray:
-        return np.linalg.inv(self._prec) @ self._info
+        identity_matrix = np.eye(self._prec.shape[0])
+        return np.linalg.inv(self._prec + identity_matrix * self.epsilon) @ self._info
 
     @property
     def cov(self) -> np.ndarray:
+        identity_matrix = np.eye(self._prec.shape[0])
         return np.linalg.inv(self._prec)
 
     def copy(self) -> 'Gaussian':

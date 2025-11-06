@@ -23,74 +23,63 @@ class NonlinearFNodeGBP(FNode):
     
     def update_factor(self):
         """선형화를 통해 팩터 업데이트: h(x) ≈ z"""
+        if len(self._vnodes) == 1:
+            # Unary factor: h(x) = z
+            
+            # v.mean 접근 시 Singular Matrix 오류가 발생할 수 있음
+            v = self._vnodes[0].mean  # (1, 1) 
+            x = v[0, 0]
+            
+            # 현재 점에서 h(x) 계산 및 미분
+            h_x = self._nonlinear_fn(x)
+            eps = 1e-6
+            h_x_plus = self._nonlinear_fn(x + eps)
+            jacob = (h_x_plus - h_x) / eps  # dh/dx
+            
+            # 선형화: h(x) ≈ h(x0) + J*(x - x0) = z
+            # J*x = z - h(x0) + J*x0
+            # 정보 형태로 변환
+            jacob_array = np.array([[jacob]])  # (1, 1)
+            precision_mat = np.array([[self._precision]])
+            
+            prec = jacob_array.T @ precision_mat @ jacob_array
+            residual = self._gt_value - h_x + jacob * x
+            info = jacob_array.T @ precision_mat @ np.array([[residual]])
+            
+            self._factor = Gaussian.from_info(self.dims, info, prec)
         
-        try:
-            # --- 이 try 블록이 추가되었습니다 ---
+        elif len(self._vnodes) == 2:
+            # Binary factor: h(x1, x2) = z
             
-            if len(self._vnodes) == 1:
-                # Unary factor: h(x) = z
-                
-                # v.mean 접근 시 Singular Matrix 오류가 발생할 수 있음
-                v = self._vnodes[0].mean  # (1, 1) 
-                x = v[0, 0]
-                
-                # 현재 점에서 h(x) 계산 및 미분
-                h_x = self._nonlinear_fn(x)
-                eps = 1e-6
-                h_x_plus = self._nonlinear_fn(x + eps)
-                jacob = (h_x_plus - h_x) / eps  # dh/dx
-                
-                # 선형화: h(x) ≈ h(x0) + J*(x - x0) = z
-                # J*x = z - h(x0) + J*x0
-                # 정보 형태로 변환
-                jacob_array = np.array([[jacob]])  # (1, 1)
-                precision_mat = np.array([[self._precision]])
-                
-                prec = jacob_array.T @ precision_mat @ jacob_array
-                residual = self._gt_value - h_x + jacob * x
-                info = jacob_array.T @ precision_mat @ np.array([[residual]])
-                
-                self._factor = Gaussian.from_info(self.dims, info, prec)
+            v1 = self._vnodes[0].mean[0, 0] 
+            v2 = self._vnodes[1].mean[0, 0]
             
-            elif len(self._vnodes) == 2:
-                # Binary factor: h(x1, x2) = z
+            h_val = self._nonlinear_fn(v1, v2)
+            
+            # 수치 미분
+            eps = 1e-6
+            dh_dv1 = (self._nonlinear_fn(v1 + eps, v2) - h_val) / eps
+            dh_dv2 = (self._nonlinear_fn(v1, v2 + eps) - h_val) / eps
+            
+            jacob = np.array([[dh_dv1, dh_dv2]])  # (1, 2)
+            precision_mat = np.array([[self._precision]])
+            
+            prec = jacob.T @ precision_mat @ jacob
+            v = np.array([[v1], [v2]])
+            residual = self._gt_value - h_val + jacob @ v
+            info = jacob.T @ precision_mat @ residual
+            
+            self._factor = Gaussian.from_info(self.dims, info, prec)
                 
-                # v.mean 접근 시 Singular Matrix 오류가 발생할 수 있음
-                v1 = self._vnodes[0].mean[0, 0] 
-                v2 = self._vnodes[1].mean[0, 0]
-                
-                h_val = self._nonlinear_fn(v1, v2)
-                
-                # 수치 미분
-                eps = 1e-6
-                dh_dv1 = (self._nonlinear_fn(v1 + eps, v2) - h_val) / eps
-                dh_dv2 = (self._nonlinear_fn(v1, v2 + eps) - h_val) / eps
-                
-                jacob = np.array([[dh_dv1, dh_dv2]])  # (1, 2)
-                precision_mat = np.array([[self._precision]])
-                
-                prec = jacob.T @ precision_mat @ jacob
-                v = np.array([[v1], [v2]])
-                residual = self._gt_value - h_val + jacob @ v
-                info = jacob.T @ precision_mat @ residual
-                
-                self._factor = Gaussian.from_info(self.dims, info, prec)
-                
-        except np.linalg.LinAlgError:
-            # 특이 행렬 오류로 인해 v.mean에 접근 실패
-            # 이 팩터의 업데이트를 이번 스텝에서는 건너뜁니다(pass).
-            # self._factor는 이전 값을 유지하게 됩니다.
-            return
 
 
-# ==================== 그래프 생성 함수들 ====================
+# ==================== Visualization ====================
 def create_nonlinear_graph_gbp(graph_type: str = 'sin_loop', n_vars: int = 5, 
                                gt_values: np.ndarray = None) -> Tuple[FactorGraph, List[VNode], np.ndarray]:
     """
     비선형 '이항' 팩터 및 루프를 포함한 그래프 생성 (GBP 버전)
     """
     
-    # GT 값 생성을 위한 기본 타입 추출
     base_type = graph_type.split('_')[0]
     
     if gt_values is None:
@@ -268,21 +257,16 @@ def create_nonlinear_graph_sample(graph_type: str = 'sin_loop', n_vars: int = 5,
     return graph, vnodes, gt_values, fnodes
 
 def compute_error_gbp(vnodes: List[VNode], gt_values: np.ndarray) -> float:
-    """GBP belief와 ground truth 간의 RMSE (오류 처리 추가)"""
+    """GBP belief와 ground truth 간의 RMSE"""
     errors = []
     for v, gt in zip(vnodes, gt_values):
         try:
-            # 이 부분에서 Singular matrix 오류가 발생할 수 있음
             belief_mean = v.belief.mean[0, 0]
             errors.append((belief_mean - gt[0])**2)
         except np.linalg.LinAlgError:
-            # 특이 행렬 오류(수렴 실패) 발생 시, 계산이 불가능하므로
-            # RMSE가 매우 크게 나오도록 큰 제곱 오차 값을 대신 추가합니다.
-            # (sqrt(1e18) = 1e9)
             errors.append(1e18) 
     
     if not errors:
-        # vnodes가 비어있는 극단적인 경우
         return 0.0
         
     return np.sqrt(np.mean(errors))
@@ -322,7 +306,6 @@ def run_experiment_single_type(graph_type: str, n_vars: int = 5, max_iters: int 
         gbp_errors_all.append(gbp_errors)
         
         # Sample-based MPPI
-        # (GBP에서 생성한 GT를 재사용하여 동일 조건에서 비교)
         graph_sample, vnodes_sample, _, fnodes_sample = create_nonlinear_graph_sample(
             graph_type, n_vars, gt_values, n_particles)
         sample_errors = [compute_error_sample(vnodes_sample, gt_values)]
@@ -349,11 +332,9 @@ def run_experiment_single_type(graph_type: str, n_vars: int = 5, max_iters: int 
 
 def run_full_comparison(n_vars: int = 5, max_iters: int = 50, 
                         n_particles: int = 200, n_trials: int = 5):
-    """모든 그래프 타입(8개)에 대한 비교 실험"""
-    print(f"=== 비선형 이항 팩터/루프 수렴성 비교 실험 ===")
-    print(f"변수: {n_vars}, Iterations: {max_iters}, Particles: {n_particles}, Trials: {n_trials}")
+    print(f"=== Non-linear Factor Divergency Comparison ===")
+    print(f"Variables: {n_vars}, Iterations: {max_iters}, num of Sampling Particles: {n_particles}, Trials: {n_trials}")
     
-    # *** 수정: 8개 그래프 타입 (Nonlinear Binary Factors) ***
     graph_types = [
         'linear_chain', 'linear_loop',
         'sin_chain', 'sin_loop',
@@ -400,17 +381,9 @@ def run_full_comparison(n_vars: int = 5, max_iters: int = 50,
         ax.grid(True, alpha=0.3, linestyle='--')
         ax.set_yscale('log')
         
-        # 최종 값 텍스트 표시
-        final_gbp = res['gbp_mean'][-1]
-        final_sample = res['sample_mean'][-1]
-        winner = 'GBP' if final_gbp < final_sample else 'Sample-MPPI'
-        ax.text(0.05, 0.05, f'Winner: {winner}', transform=ax.transAxes,
-                fontsize=10, fontweight='bold', 
-                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
             
     plt.tight_layout()
-    plt.savefig('nonlinear_binary_loop_comparison.png', dpi=300, bbox_inches='tight')
-    print(f"\n그래프가 'nonlinear_binary_loop_comparison.png'로 저장되었습니다.")
+    plt.savefig('nonlinear_binary_loop_comparison2.png', dpi=300, bbox_inches='tight')
     plt.show()
     
     # 요약 테이블
