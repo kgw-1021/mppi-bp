@@ -104,11 +104,9 @@ class Gaussian:
         prec_ba = prec[np.ix_(axis_b, axis_a)]
         prec_bb = prec[np.ix_(axis_b, axis_b)]
 
-        epsilon = 1e-6 # 매우 작은 양의 댐핑 상수
-        # prec_bb의 크기에 맞는 단위 행렬 생성
         identity_matrix = np.eye(prec_bb.shape[0])
 
-        prec_bb_inv = np.linalg.inv(prec_bb + epsilon * identity_matrix)
+        prec_bb_inv = np.linalg.inv(prec_bb + self.epsilon * identity_matrix)
         info_ = info_a - prec_ab @ prec_bb_inv @ info_b
         prec_ = prec_aa - prec_ab @ prec_bb_inv @ prec_ba
 

@@ -382,7 +382,7 @@ def run_full_comparison(n_vars: int = 5, max_iters: int = 50,
         
             
     plt.tight_layout()
-    plt.savefig('nonlinear_binary_loop_comparison.png', dpi=300, bbox_inches='tight')
+    plt.savefig('nonlinear_chain_loop_comparison.png', dpi=300, bbox_inches='tight')
     plt.show()
     
     # 요약 테이블
