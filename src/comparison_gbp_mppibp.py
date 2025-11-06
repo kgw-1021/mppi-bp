@@ -191,7 +191,6 @@ def create_nonlinear_graph_sample(graph_type: str = 'sin_loop', n_vars: int = 5,
     mppi_lambda = 1.0
     
     # 2. 이항 팩터 (비용함수) 추가 (Chain 또는 Loop)
-    
     is_loop = 'loop' in graph_type
     num_factors = n_vars if is_loop else n_vars - 1
 
@@ -368,8 +367,8 @@ def run_full_comparison(n_vars: int = 5, max_iters: int = 50,
         ax.fill_between(iters, res['gbp_mean'] - res['gbp_std'], 
                         res['gbp_mean'] + res['gbp_std'], alpha=0.2, color='b')
         
-        # Sample-MPPI
-        ax.plot(iters, res['sample_mean'], 'r-', linewidth=2.5, label='Sample-MPPI', 
+        # MPPI-BP (ours)
+        ax.plot(iters, res['sample_mean'], 'r-', linewidth=2.5, label='MPPI-BP', 
                 marker='s', markevery=max_iters//5, markersize=6)
         ax.fill_between(iters, res['sample_mean'] - res['sample_std'],
                         res['sample_mean'] + res['sample_std'], alpha=0.2, color='r')
@@ -383,7 +382,7 @@ def run_full_comparison(n_vars: int = 5, max_iters: int = 50,
         
             
     plt.tight_layout()
-    plt.savefig('nonlinear_binary_loop_comparison2.png', dpi=300, bbox_inches='tight')
+    plt.savefig('nonlinear_binary_loop_comparison.png', dpi=300, bbox_inches='tight')
     plt.show()
     
     # 요약 테이블
@@ -394,7 +393,7 @@ def run_full_comparison(n_vars: int = 5, max_iters: int = 50,
         res = results[gtype]
         gbp_final = f"{res['gbp_mean'][-1]:.6f}±{res['gbp_std'][-1]:.6f}"
         sample_final = f"{res['sample_mean'][-1]:.6f}±{res['sample_std'][-1]:.6f}"
-        winner = 'GBP' if res['gbp_mean'][-1] < res['sample_mean'][-1] else 'Sample-MPPI'
+        winner = 'GBP' if res['gbp_mean'][-1] < res['sample_mean'][-1] else 'MPPI-BP'
         print(f"{gtype.upper():<20} {gbp_final:<20} {sample_final:<20} {winner:<10}")
     print(f"{'='*70}")
 
