@@ -230,19 +230,75 @@ class SampleFNode(Node):
 
     def calc_msg(self, edge: Edge) -> SampleMessage:
         """
-        팩터가 특정 variable edge로 보낼 메시지:
-        - joint factor samples를 대상 변수 차원으로 사영하고,
-          동일 샘플 값이 있으면 가중치 합산(경향)
+        [표준 BP 방식]
+        팩터가 특정 variable edge(s)로 보낼 메시지:
+        m_{f -> s}(x_s) propto Sum_{~x_s} [ f(x_f) * Prod_{t!=s} m_{t -> f}(x_t) ]
+        
+        이를 입자 기반으로 근사:
+        1. 제안 분포로 self._factor의 입자 (samples, weights)를 사용.
+        2. 이 입자들의 가중치를 다른 모든 수신 메시지(m_{t->f})로 재가중치.
+        3. 목표 변수(x_s) 차원으로 사영(marginalize)하고 재샘플링.
         """
         var_node = edge.get_other(self)
         var_dims = var_node.dims
-        # project joint samples to var dims
-        proj = self._factor.project(var_dims)
-        # 합쳐진 동일 샘플은 그대로 두고 정규화
-        proj.normalize()
-        # 재샘플링(원하면)
-        proj = proj.resample(min(500, proj.N), jitter=1e-4)
-        return proj
+
+        # 1. 제안 분포로 팩터의 입자를 가져옴
+        joint_samples = self._factor.samples
+        # 가중치를 복사하여 원본을 수정하지 않도록 함
+        new_weights = self._factor.weights.copy()
+
+        # 2. 다른 모든 수신 메시지로 재가중치
+        for e in self.edges:
+            if e is edge:
+                continue  # 우리가 메시지를 보낼 엣지는 제외
+
+            msg_in = e.get_message_to(self)
+            if msg_in is None:
+                continue
+
+            in_node = e.get_other(self)
+            in_dims = in_node.dims # 이 메시지의 차원 (예: ['x1', 'x2'])
+
+            # 이 메시지를 평가하기 위해 joint_samples에서 해당 차원의 열을 추출
+            try:
+                # self._dims (예: ['x1', 'x2', 'x3'])에서 
+                # in_dims (['x1', 'x2'])에 해당하는 인덱스 찾기
+                idxs_in = [self._dims.index(d) for d in in_dims]
+            except ValueError:
+                # 이 팩터가 해당 차원을 다루지 않으면 메시지 무시
+                continue
+            
+            # (K, D_in) 형태의 샘플 부분 집합
+            samples_for_msg = joint_samples[:, idxs_in]
+
+            # 이 샘플들에 대한 메시지 밀도 값 (K,) 계산
+            msg_vals = msg_in.evaluate_kernel(samples_for_msg)
+
+            # 가중치 업데이트 (확률의 곱)
+            new_weights *= msg_vals
+
+        # 3. 목표 변수 차원으로 사영(Marginalize)
+        
+        # joint_samples에서 var_dims에 해당하는 열(샘플) 추출
+        try:
+            idxs_out = [self._dims.index(d) for d in var_dims]
+        except ValueError:
+            # 이 팩터가 목표 변수 차원을 모르면 메시지 전송 불가
+            return None 
+
+        samples_out = joint_samples[:, idxs_out]
+        
+        # 사영된 샘플과 새로 계산된 가중치로 메시지 생성
+        out_msg = SampleMessage(var_dims, samples_out, new_weights)
+        
+        # 가중치 정규화 (필수)
+        out_msg.normalize()
+
+        # 4. 재샘플링 (다음 단계 전파를 위해 깨끗한 입자 집합 생성)
+        # 재샘플링은 가중치가 높은 입자를 복제하고 낮은 입자를 제거함
+        out_msg = out_msg.resample(min(500, out_msg.N), jitter=1e-4)
+
+        return out_msg
 
     def propagate(self):
         for e in self.edges:
@@ -293,3 +349,4 @@ class SampleFactorGraph(Graph):
             for v in vnodes:
                 beliefs[v] = v.update_belief()
         return beliefs
+
