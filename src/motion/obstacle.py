@@ -1,47 +1,73 @@
-from typing import Tuple, List, Dict
 import numpy as np
-
+from typing import Tuple, List, Dict
 
 class ObstacleMap:
     def __init__(self) -> None:
         self.objects = {}
+        # 객체가 추가될 때마다 JAX/GPU가 처리하기 쉬운 형태로 캐싱
+        self._cache_obstacles()
 
     def set_circle(self, name: str, centerx, centery, radius):
         o = {'type': 'circle', 'name': name, 'centerx': centerx, 'centery': centery, 'radius': radius}
         self.objects[name] = o
+        self._cache_obstacles() # 장애물이 변경될 때마다 캐시 업데이트
 
-    def get_d_grad(self, x, y) -> Tuple[float, float, float]:
-        mindist = np.inf
-        mino = None
+    def _cache_obstacles(self):
+        """장애물 데이터를 NumPy 배열로 변환 (JAX/GPU 연산에 최적화)"""
+        self._circles = []
         for o in self.objects.values():
             if o['type'] == 'circle':
-                ox, oy, r = o['centerx'], o['centery'], o['radius']
-                d = np.sqrt((x - ox)**2 + (y - oy)**2) - r
-                if d < mindist:
-                    mindist = d
-                    mino = o
-        if mino is None:
-            return np.inf, 0, 0
-        if mino['type'] == 'circle':
-            ox, oy = mino['centerx'], mino['centery']
-            dx, dy = x - ox, y - oy
-            mag = np.sqrt(dx**2 + dy**2) + 1e-8
-            return mindist, dx/mag, dy/mag
+                self._circles.append([o['centerx'], o['centery'], o['radius']])
+        
+        if self._circles:
+            # (M, 3) 배열. M은 원형 장애물 수
+            self._circle_params = np.array(self._circles)
+        else:
+            self._circle_params = np.empty((0, 3))
 
     def get_obstacle_cost(self, samples: np.ndarray, safe_dist: float) -> np.ndarray:
         """
-        장애물 cost function for MPPI.
+        [VECTORIZED - NO GRADIENT] 장애물 cost function for MPPI.
         samples: (K, 4) array [x, y, vx, vy]
         Returns: (K,) cost values
         """
-        K = samples.shape[0]
-        costs = np.zeros(K)
-        for i in range(K):
-            x, y = samples[i, 0], samples[i, 1]
-            distance, _, _ = self.get_d_grad(x, y)
-            if distance < safe_dist:
-                # Exponential penalty when inside safe zone
-                costs[i] = np.exp(-distance / safe_dist) * 100
-            else:
-                costs[i] = 0
+        if self._circle_params.shape[0] == 0:
+            return np.zeros(samples.shape[0])
+
+        # (K, 2) 샘플 위치
+        samples_xy = samples[:, :2]
+        
+        # (M, 2) 장애물 중심
+        centers = self._circle_params[:, :2]
+        # (M,) 장애물 반지름
+        radii = self._circle_params[:, 2]
+
+        # NumPy 브로드캐스팅을 사용한 벡터화 연산
+        # (K, 1, 2) - (1, M, 2) => (K, M, 2)
+        diffs = samples_xy[:, np.newaxis, :] - centers[np.newaxis, :, :]
+        
+        # (K, M) - 각 샘플과 각 장애물 중심 간의 거리 (L2 norm)
+        # np.linalg.norm(diffs, axis=2) 대신 수동 계산 (JAX/Numba에서 더 빠를 수 있음)
+        mags = np.sqrt(np.sum(diffs**2, axis=2)) + 1e-8
+        
+        # (K, M) - 각 샘플과 각 장애물 표면 간의 SDF
+        distances = mags - radii[np.newaxis, :]
+        
+        # (K,) - 각 샘플에 대해 *가장 가까운* 장애물과의 거리
+        # (axis=1은 M개 장애물에 대한 축)
+        min_distances = np.min(distances, axis=1)
+        
+        # 벡터화된 비용 계산
+        costs = np.zeros_like(min_distances)
+        
+        # bool 마스크 생성: min_distances가 safe_dist보다 작은 샘플
+        inside_safe_zone = min_distances < safe_dist
+        
+        # safe_dist 내부에 있는 샘플(inside_safe_zone=True)에 대해서만 비용 계산
+        # 참고: 원본 코드의 np.exp(-distance / safe_dist)는
+        # distance가 음수(충돌)일 때 비용이 매우 커지고, distance가 0(접촉)일 때 100,
+        # distance가 safe_dist(경계)일 때 약 36이 됩니다.
+        # 이 로직을 그대로 따릅니다.
+        costs[inside_safe_zone] = np.exp(-min_distances[inside_safe_zone] / safe_dist) * 100
+        
         return costs

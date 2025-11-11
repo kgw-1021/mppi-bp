@@ -174,30 +174,22 @@ class SampleAgent:
             self.send(o)
 
     def step_propagate(self):
-        # MPPI로 각 팩터 업데이트
         factor_costs = {}
-        
+
         # 시작 및 목표 팩터 비용
+        factor_costs[self._fnode_start] = (self._start_cost, {'base': self._state[:, 0]})
         if self._target is not None:
-            factor_costs[self._fnode_start] = (self._start_cost, {'base': self._state[:, 0]})
             factor_costs[self._fnode_end] = (self._target_cost, {'base': self._target[:, 0]})
-        else:
-            factor_costs[self._fnode_start] = (self._start_cost, {'base': self._state[:, 0]})
-        
-        # 동역학 팩터는 cost_fn을 명시적으로 전달하지 않음 (자체 메서드 사용)
-        # 빈 튜플로 전달하면 loopy_propagate에서 update_factor_with_mppi()를 인자 없이 호출
-        for f in self._fnodes_dyna:
-            factor_costs[f] = (None, {})
-        
-        # 장애물 팩터도 동일
-        for f in self._fnodes_obst:
-            factor_costs[f] = (None, {})
-        
-        # 거리 팩터도 동일
+
+        # (None, {})을 사용할 모든 팩터 노드 리스트
+        mppi_nodes = self._fnodes_dyna + self._fnodes_obst
         for on in self._others:
-            for f in self._others[on]['f']:
-                factor_costs[f] = (None, {})
-        
+            mppi_nodes.extend(self._others[on]['f'])
+
+        # 딕셔너리 업데이트
+        for f in mppi_nodes:
+            factor_costs[f] = (None, {})
+
         # Loopy BP with MPPI
         self._graph.loopy_propagate(steps=1, factor_costs=factor_costs)
 
@@ -213,16 +205,16 @@ class SampleAgent:
         next_state[:2] += next_state[2:] * self._dt
         
         # 모든 belief를 한 단계씩 이동
-        for i in range(self._steps - 1):
+        for i in range(1, self._steps - 1): # i=0 제외
             self._vnodes[i]._belief = self._vnodes[i+1]._belief.copy()
         
         # 마지막 노드는 extrapolation
-        last_belief = self._vnodes[-1].belief
+        last_belief = self._vnodes[-2].belief # v(T-2)의 신념을 기반으로 추정 (이전 코드에서는 v(T-1) 기반이었음 - 논리 수정)
         samples = last_belief.samples.copy()
         samples[:, :2] += samples[:, 2:] * self._dt
         self._vnodes[-1]._belief = SampleMessage(self._vnodes[-1].dims, samples, last_belief.weights.copy())
-        
-        # 실제 상태 업데이트
+
+        # 실제 상태 업데이트 (v0는 여기서 설정됨)
         self._state = next_state
         self.set_state(self._state)
 
@@ -293,28 +285,22 @@ class SampleAgent:
         self.send(on)
 
     def send(self, name: str):
-        """다른 에이전트에게 메시지 전송"""
         if name not in self._others:
             return
-        
+
         other = self._others[name]['a']
         for i in range(1, self._steps):
             vname = f'{self._name}.v{i}'
             v = self._vnodes[i]
-            f: SampleFNode = self._others[name]['f'][i-1]
+            f: SampleFNode = self._others[name]['f'][i-1] # DistSampleFNode
 
-            belief = v.belief.copy()
-            other.push_msg(('belief', self._name, vname, belief))
+            # 이 엣지(f)로 나가는 메시지(v->f)만 계산
+            v2f_msg = v.calc_msg(f.edges[0]) # v가 f에 연결된 엣지를 찾아야 함
+            if v2f_msg is not None:
+                v2f_msg = v2f_msg.copy()
 
-            f2v = f.edges[0].get_message_to(v)
-            if f2v is not None:
-                f2v = f2v.copy()
-            other.push_msg(('f2v', self._name, vname, f2v))
-
-            v2f = f.edges[0].get_message_to(f)
-            if v2f is not None:
-                v2f = v2f.copy()
-            other.push_msg(('v2f', self._name, vname, v2f))
+            # v->f 메시지만 전송
+            other.push_msg(('v2f', self._name, vname, v2f_msg))
 
     def end_com(self, name: str):
         """다른 에이전트와 통신 종료"""
