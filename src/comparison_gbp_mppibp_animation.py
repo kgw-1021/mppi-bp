@@ -159,7 +159,7 @@ def create_2d_factor_graph_sample(n_vars: int = 7, n_particles: int = 5000) -> T
     
     fnodes = []
     # MPPI 파라미터 조정
-    mppi_K = 5000 # 더 많은 샘플
+    mppi_K = 100 # 더 많은 샘플
     mppi_lambda = 0.05 # 람다 증가 (더 많은 탐색)
     mppi_noise_std = 0.5 # 노이즈 증가 (더 많은 탐색)
     
@@ -254,7 +254,7 @@ def get_positions_sample(vnodes: List[SampleVNode]) -> np.ndarray:
 
 
 def create_animation(n_vars: int = 7, max_iters: int = 10, n_particles: int = 5000,
-                     save_path: str = '2d_convergence_highly_nonlinear.gif'):
+                     save_path: str = '2d_convergence_highly_nonlinear2.gif'):
     """
     GBP vs MPPI-BP 수렴 과정을 나란히 비교하는 애니메이션 생성
     """
@@ -432,7 +432,7 @@ def create_animation(n_vars: int = 7, max_iters: int = 10, n_particles: int = 50
         ax.legend(loc='upper right', fontsize=10)
     
     plt.tight_layout()
-    plt.savefig('2d_convergence_highly_nonlinear_final.png', dpi=300, bbox_inches='tight')
+    plt.savefig('2d_convergence_highly_nonlinear.png', dpi=300, bbox_inches='tight')
     plt.show()
     
     print("\nExperiment completed with highly nonlinear factors!")
@@ -442,6 +442,6 @@ if __name__ == '__main__':
     create_animation(
         n_vars=20,
         max_iters=5, # 반복 횟수 증가
-        n_particles=5000,
+        n_particles=100,
         save_path='2d_convergence_highly_nonlinear.gif'
     )
