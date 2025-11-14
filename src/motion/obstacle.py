@@ -58,16 +58,14 @@ class ObstacleMap:
         min_distances = np.min(distances, axis=1)
         
         # 벡터화된 비용 계산
+
         costs = np.zeros_like(min_distances)
         
-        # bool 마스크 생성: min_distances가 safe_dist보다 작은 샘플
-        inside_safe_zone = min_distances < safe_dist
-        
-        # safe_dist 내부에 있는 샘플(inside_safe_zone=True)에 대해서만 비용 계산
-        # 참고: 원본 코드의 np.exp(-distance / safe_dist)는
-        # distance가 음수(충돌)일 때 비용이 매우 커지고, distance가 0(접촉)일 때 100,
-        # distance가 safe_dist(경계)일 때 약 36이 됩니다.
-        # 이 로직을 그대로 따릅니다.
-        costs[inside_safe_zone] = np.exp(-min_distances[inside_safe_zone] / safe_dist) * 100
+        # Hard constraint: 충돌
+        collision = min_distances < 0
+        costs[collision] = 1e10 
+        # Soft constraint: safe zone 내부
+        inside_safe = (min_distances >= 0) & (min_distances < safe_dist)
+        costs[inside_safe] = ((safe_dist - min_distances[inside_safe]) / safe_dist)**2 * 100
         
         return costs

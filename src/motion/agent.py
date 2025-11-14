@@ -1,5 +1,6 @@
 from typing import Tuple, List, Dict
 import numpy as np
+# factor_graph_mppi는 리팩토링된 버전을 사용한다고 가정
 from fg.factor_graph_mppi import SampleMessage, SampleVNode, SampleFNode, SampleFactorGraph
 
 from .obstacle import ObstacleMap
@@ -59,20 +60,20 @@ class SampleAgent:
 
         # Create FNode for start (strong prior at current state)
         self._fnode_start = SampleFNode('fstart', [self._vnodes[0]], 
-                                        mppi_params={'K': 200, 'lambda': 0.1, 'noise_std': 0.1})
+                                        mppi_params={'K': 400, 'lambda': 10.0, 'noise_std': 0.5})
         
         # Create FNode for target
         self._fnode_end = SampleFNode('fend', [self._vnodes[-1]],
-                                      mppi_params={'K': 200, 'lambda': 0.5, 'noise_std': 0.5})
+                                      mppi_params={'K': 400, 'lambda': 10.0, 'noise_std': 1.0})
         
-        self.set_state(state)
+        self.set_state(state) 
         self.set_target(target)
 
         # Create DynaFNode
         self._fnodes_dyna = [DynaSampleFNode(
             f'fd{i}{i+1}', [self._vnodes[i], self._vnodes[i+1]], 
             dt=self._dt, pos_weight=self._dyna_pos_weight, vel_weight=self._dyna_vel_weight,
-            mppi_params={'K': 400, 'lambda': 1.0, 'noise_std': 0.5}
+            mppi_params={'K': 400, 'lambda': 2.0, 'noise_std': 0.5}
         ) for i in range(steps-1)]
 
         # Create ObstacleFNode
@@ -169,59 +170,67 @@ class SampleAgent:
             if self._others[on]['a'] not in others:
                 self.end_com(on)
 
+    # -----------------------------------------------------------------
+    # REFACTOR 2: (분산 BP) `send` 대신 `exchange_messages`를 호출하도록 수정
+    # -----------------------------------------------------------------
     def step_com(self):
+        """계산된 메시지를 다른 에이전트와 교환"""
         for o in self._others:
-            self.send(o)
+            self.exchange_messages(o)
 
     def step_propagate(self):
+        """(수정됨) MPPI 팩터 업데이트 및 내부 메시지 전파"""
         factor_costs = {}
 
         # 시작 및 목표 팩터 비용
+        # _fnode_start는 v[0]의 신념(이전 v[1]의 분포)을
+        # 실제 실행된 _state 값으로 재가중치(제약)하는 역할을 함
         factor_costs[self._fnode_start] = (self._start_cost, {'base': self._state[:, 0]})
         if self._target is not None:
             factor_costs[self._fnode_end] = (self._target_cost, {'base': self._target[:, 0]})
 
-        # (None, {})을 사용할 모든 팩터 노드 리스트
+        # (None, {})을 사용할 모든 MPPI 팩터 노드 리스트
+        # (Dyna, Obst, Dist 노드들은 'None'을 처리하도록 오버라이드 되었다고 가정)
         mppi_nodes = self._fnodes_dyna + self._fnodes_obst
         for on in self._others:
             mppi_nodes.extend(self._others[on]['f'])
 
         # 딕셔너리 업데이트
         for f in mppi_nodes:
-            factor_costs[f] = (None, {})
+            if f not in factor_costs: # fstart/fend 중복 방지
+                factor_costs[f] = (None, {})
 
         # Loopy BP with MPPI
+        # (이 단계에서 모든 노드가 내부적으로 메시지를 계산하여 엣지에 저장함)
         self._graph.loopy_propagate(steps=1, factor_costs=factor_costs)
 
+    # -----------------------------------------------------------------
+    # REFACTOR 1: (웜 스타트) `set_state` 강제 호출을 제거하고 신념을 이동(shift)
+    # -----------------------------------------------------------------
     def step_move(self):
-        """실제 이동 시뮬레이션"""
-        # v1의 평균으로 이동
+        
+        # 1. v1의 평균으로 다음 상태 결정
         v1_belief = self._vnodes[1].belief
         next_state = np.average(v1_belief.samples, axis=0, weights=v1_belief.weights)
         next_state = next_state.reshape(-1, 1)
         
-        # 약간의 노이즈 추가
-        next_state += np.random.randn(4, 1) * 0.01
-        next_state[:2] += next_state[2:] * self._dt
-        
-        # 모든 belief를 한 단계씩 이동
-        for i in range(1, self._steps - 1): # i=0 제외
+        # 2. 모든 belief를 한 단계씩 앞으로 이동 (v[0] = v[1], v[1] = v[2], ...)
+        for i in range(self._steps - 1): # i = 0 부터 (T-2) 까지
             self._vnodes[i]._belief = self._vnodes[i+1]._belief.copy()
         
-        # 마지막 노드는 extrapolation
-        last_belief = self._vnodes[-2].belief # v(T-2)의 신념을 기반으로 추정 (이전 코드에서는 v(T-1) 기반이었음 - 논리 수정)
+        # 3. 마지막 노드(v[T-1])는 이전 노드(새 v[T-2], 즉 이전 v[T-1])로부터 외삽(extrapolate)
+        last_belief = self._vnodes[-2].belief 
         samples = last_belief.samples.copy()
-        samples[:, :2] += samples[:, 2:] * self._dt
+        samples[:, :2] += samples[:, 2:] * self._dt 
         self._vnodes[-1]._belief = SampleMessage(self._vnodes[-1].dims, samples, last_belief.weights.copy())
 
-        # 실제 상태 업데이트 (v0는 여기서 설정됨)
+        # 4. 실제 에이전트 상태 업데이트
         self._state = next_state
-        self.set_state(self._state)
+        
 
     def set_state(self, state):
-        """현재 상태 설정"""
+        """(초기화용) 현재 상태 설정. v0에 강한 prior 설정."""
         self._state = np.array(state)
-        # v0에 강한 prior 설정 (현재 위치 주변에 집중)
         samples = self._state[:, 0][None, :] + np.random.randn(self._num_particles, 4) * 0.05
         self._vnodes[0]._belief = SampleMessage(
             self._vnodes[0].dims, samples, 
@@ -254,11 +263,15 @@ class SampleAgent:
         if _type == 'belief':
             vnode._belief = msg_data
         if _type == 'f2v':
+            # 팩터 -> 원격 vnode 엣지로 메시지 설정
             e = vnode.edges[0]
             e.set_message_from(e.get_other(vnode), msg_data)
         if _type == 'v2f':
+            # 원격 vnode -> 팩터 엣지로 메시지 설정
             e = vnode.edges[0]
-            vnode._msgs[e] = msg_data
+            # (수정) RemoteVNode는 calc_msg가 없으므로, 수신된 메시지를 엣지에 직접 저장
+            e.set_message_from(vnode, msg_data)
+            # (원본) vnode._msgs[e] = msg_data -> RemoteVNode에 _msgs가 정의되지 않음
 
     def setup_com(self, other: 'SampleAgent'):
         """다른 에이전트와 통신 설정"""
@@ -282,25 +295,47 @@ class SampleAgent:
         
         self._others[on] = {'a': other, 'v': vnodes, 'f': fnodes}
         other.setup_com(self)
-        self.send(on)
+        # (수정) 초기 메시지 전송은 step_com에서만 수행
+        # self.send(on)
 
-    def send(self, name: str):
-        if name not in self._others:
-            return
+    # -----------------------------------------------------------------
+    # REFACTOR 2: (분산 BP) `send`를 `exchange_messages`로 대체
+    # -----------------------------------------------------------------
+    def update_factors(self):
+        """MPPI로 factor 업데이트만"""
+        factor_costs = {
+            self._fnode_start: (self._start_cost, {'base': self._state[:, 0]}),
+        }
+        if self._target is not None:
+            factor_costs[self._fnode_end] = (self._target_cost, {'base': self._target[:, 0]})
+        
+        all_factors = (self._fnodes_dyna + self._fnodes_obst + 
+                    [f for other in self._others.values() for f in other['f']])
+        
+        for f in all_factors:
+            if f in factor_costs:
+                cost_fn, kwargs = factor_costs[f]
+                f.update_factor_with_mppi(cost_fn, kwargs.get('base'))
+            else:
+                f.update_factor_with_mppi()  # 자체 cost 사용
 
-        other = self._others[name]['a']
-        for i in range(1, self._steps):
-            vname = f'{self._name}.v{i}'
-            v = self._vnodes[i]
-            f: SampleFNode = self._others[name]['f'][i-1] # DistSampleFNode
+    def propagate_v_to_f(self):
+        """Var → Factor 메시지만"""
+        for v in self._vnodes:
+            v.propagate()
 
-            # 이 엣지(f)로 나가는 메시지(v->f)만 계산
-            v2f_msg = v.calc_msg(f.edges[0]) # v가 f에 연결된 엣지를 찾아야 함
-            if v2f_msg is not None:
-                v2f_msg = v2f_msg.copy()
+    def propagate_f_to_v(self):
+        """Factor → Var 메시지만"""
+        all_factors = ([self._fnode_start, self._fnode_end] + 
+                    self._fnodes_dyna + self._fnodes_obst + 
+                    [f for other in self._others.values() for f in other['f']])
+        for f in all_factors:
+            f.propagate()
 
-            # v->f 메시지만 전송
-            other.push_msg(('v2f', self._name, vname, v2f_msg))
+    def update_beliefs(self):
+        """Belief 업데이트만"""
+        for v in self._vnodes:
+            v.update_belief()
 
     def end_com(self, name: str):
         """다른 에이전트와 통신 종료"""
@@ -314,7 +349,44 @@ class SampleAgent:
         for f in fnodes:
             self._graph.remove_node(f)
         other_dict = self._others.pop(name)
-        other_dict['a'].end_com(self._name)
+        # (수정) 상대방의 end_com을 재귀 호출하지 않도록 방지
+        if self._name in other_dict['a']._others:
+            other_dict['a'].end_com(self._name)
+
+    def exchange_messages(self, name: str):
+
+        if name not in self._others:
+            return
+
+        other = self._others[name]['a']
+        
+        for i in range(1, self._steps):
+            v_self = self._vnodes[i]
+            v_remote: RemoteSampleVNode = self._others[name]['v'][i-1]
+            f: SampleFNode = self._others[name]['f'][i-1] # DistSampleFNode
+
+            edge_v_f = None
+            for e in v_self.edges:
+                if e.get_other(v_self) is f:
+                    edge_v_f = e
+                    break
+            
+            if edge_v_f:
+                v2f_msg = edge_v_f.get_message_to(f) 
+                if v2f_msg is not None:
+                    other.push_msg(('v2f', self._name, v_remote.name, v2f_msg.copy()))
+
+            edge_f_v = None
+            for e in f.edges:
+                if e.get_other(f) is v_remote:
+                    edge_f_v = e
+                    break
+            
+            if edge_f_v:
+
+                f2v_msg = edge_f_v.get_message_to(v_remote)
+                if f2v_msg is not None:
+                    other.push_msg(('f2v', self._name, v_remote.name, f2v_msg.copy()))
 
 
 class SampleEnv:
@@ -326,7 +398,7 @@ class SampleEnv:
             a._env = self
             self._agents.append(a)
 
-    def find_near(self, this: SampleAgent, range: float = 1000, max_num: int = -1) -> List[SampleAgent]:
+    def find_near(self, this: SampleAgent, range: float = 500, max_num: int = -1) -> List[SampleAgent]:
         agent_ds = []
         for a in self._agents:
             if a is this:
@@ -339,15 +411,37 @@ class SampleEnv:
             agent_ds = agent_ds[:max_num]
         return [a for a, d in agent_ds]
 
+    # -----------------------------------------------------------------
+    # REFACTOR 3: (실행 순서) propagate (계산) -> com (교환) 순서로 변경
+    # -----------------------------------------------------------------
     def step_plan(self, iters=12):
-        """Planning step: 통신 설정 및 belief propagation"""
         for a in self._agents:
             a.step_connect()
+        
         for i in range(iters):
+            # 1. Factor 업데이트
             for a in self._agents:
-                a.step_com()
+                a.update_factors()
+            
+            # 2. V→F 메시지
             for a in self._agents:
-                a.step_propagate()
+                a.propagate_v_to_f()
+            
+            # 3. 메시지 교환 (v→f)
+            for a in self._agents:
+                a.step_com()  # v2f 메시지 전송
+            
+            # 4. F→V 메시지
+            for a in self._agents:
+                a.propagate_f_to_v()
+            
+            # 5. 메시지 교환 (f→v)
+            for a in self._agents:
+                a.step_com()  # f2v 메시지 전송
+            
+            # 6. Belief 업데이트
+            for a in self._agents:
+                a.update_beliefs()
 
     def step_move(self):
         """Move step: 실제 이동 시뮬레이션"""

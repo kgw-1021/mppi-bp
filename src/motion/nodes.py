@@ -68,8 +68,9 @@ class DynaSampleFNode(SampleFNode):
         if base_trajectory is None:
             v0_belief = self._vnodes[0].belief
             v1_belief = self._vnodes[1].belief
-            base = np.concatenate([v0_belief.samples.mean(axis=0), 
-                                   v1_belief.samples.mean(axis=0)])
+            v0_mean = np.average(v0_belief.samples, weights=v0_belief.weights, axis=0)
+            v1_mean = np.average(v1_belief.samples, weights=v1_belief.weights, axis=0)
+            base = np.concatenate([v0_mean, v1_mean])
         else:
             base = base_trajectory
         
