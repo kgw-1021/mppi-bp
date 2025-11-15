@@ -23,8 +23,8 @@ class RemoteSampleVNode(SampleVNode):
 class DynaSampleFNode(SampleFNode):
     """동역학 제약 팩터 노드 (MPPI 기반)"""
     def __init__(self, name: str, vnodes: List[SampleVNode], 
-                 dt: float = 0.1, pos_weight: float = 10, vel_weight: float = 2,
-                 mppi_params: dict = None) -> None:
+                 dt: float = 0.1, pos_weight: float = 10, vel_weight: float = 2, 
+                 limit_weight: float = 100.0, mppi_params: dict = None) -> None:
         assert len(vnodes) == 2
         if mppi_params is None:
             mppi_params = {'K': 400, 'lambda': 1.0, 'noise_std': 0.5}
@@ -32,6 +32,8 @@ class DynaSampleFNode(SampleFNode):
         self._dt = dt
         self._pos_weight = pos_weight
         self._vel_weight = vel_weight
+        self.limit_weight = limit_weight
+        self.MAX_SPEED = 1.0
 
     def dynamics_cost(self, samples: np.ndarray) -> np.ndarray:
         """
@@ -55,7 +57,12 @@ class DynaSampleFNode(SampleFNode):
         dvy = vy1 - vy0
         vel_cost = (dvx**2 + dvy**2) * self._vel_weight
         
-        costs = pos_cost + vel_cost
+        speed1 = np.sqrt(vx1**2 + vy1**2)
+        violation = np.maximum(0, speed1 - self.MAX_SPEED)
+
+        max_vel_cost = violation**2 * self.limit_weight
+
+        costs = pos_cost + vel_cost + max_vel_cost
         return costs
 
     def update_factor_with_mppi(self, cost_fn=None, base_trajectory: np.ndarray = None):
@@ -64,10 +71,12 @@ class DynaSampleFNode(SampleFNode):
         if cost_fn is None:
             cost_fn = self.dynamics_cost
         
-        # 연결된 변수들의 현재 belief 평균으로 base 설정
+        # ✅ 연결된 변수들의 현재 belief 가중 평균으로 base 설정
         if base_trajectory is None:
             v0_belief = self._vnodes[0].belief
             v1_belief = self._vnodes[1].belief
+            
+            # ✅ 가중 평균 사용
             v0_mean = np.average(v0_belief.samples, weights=v0_belief.weights, axis=0)
             v1_mean = np.average(v1_belief.samples, weights=v1_belief.weights, axis=0)
             base = np.concatenate([v0_mean, v1_mean])
@@ -110,7 +119,8 @@ class ObstacleSampleFNode(SampleFNode):
         
         if base_trajectory is None:
             v_belief = self._vnodes[0].belief
-            base = v_belief.samples.mean(axis=0)
+            # ✅ 가중 평균 사용 (기존: samples.mean())
+            base = np.average(v_belief.samples, weights=v_belief.weights, axis=0)
         else:
             base = base_trajectory
         
@@ -158,8 +168,11 @@ class DistSampleFNode(SampleFNode):
         if base_trajectory is None:
             v0_belief = self._vnodes[0].belief
             v1_belief = self._vnodes[1].belief
-            base = np.concatenate([v0_belief.samples.mean(axis=0), 
-                                   v1_belief.samples.mean(axis=0)])
+            
+            # ✅ 가중 평균 사용 (기존: samples.mean())
+            v0_mean = np.average(v0_belief.samples, weights=v0_belief.weights, axis=0)
+            v1_mean = np.average(v1_belief.samples, weights=v1_belief.weights, axis=0)
+            base = np.concatenate([v0_mean, v1_mean])
         else:
             base = base_trajectory
         

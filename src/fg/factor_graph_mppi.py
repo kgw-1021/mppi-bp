@@ -19,6 +19,8 @@ class SampleMessage:
         if self.samples.ndim == 1:
             self.samples = self.samples.reshape(-1, 1)
 
+        self.samples = self.samples.squeeze()
+
         assert self.samples.ndim == 2 and self.samples.shape[1] == len(self._dims), \
             f"Samples shape {self.samples.shape} mismatch with dims {self._dims}"
             
