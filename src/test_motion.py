@@ -141,6 +141,19 @@ def run_simulation_demo():
         env.step_plan(iters=20)  
         env.step_move()
 
+        all_arrived = True
+        for agent in env._agents:
+            pos = agent._state[:2].flatten()
+            goal = agent.get_target()[:2]
+            if np.linalg.norm(pos - goal) > 5.0:
+                all_arrived = False
+                break
+
+        if all_arrived:
+            print("\nAll agents reached the destination. Simulation stopped.\n")
+            ani.event_source.stop()  # 애니메이션 종료
+            return []  # 빈 아티스트 반환
+
         # --- [요청사항] 스텝별 정보 출력 ---
         print("-" * 70)
         print(f" S T E P : {frame} ")
@@ -218,7 +231,7 @@ def run_simulation_demo():
         frames=300, 
         init_func=init_animation,
         interval=50, 
-        blit=True
+        blit=False
     )
     
     plt.show()

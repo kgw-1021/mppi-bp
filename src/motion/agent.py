@@ -1,6 +1,5 @@
 from typing import Tuple, List, Dict
 import numpy as np
-# factor_graph_mppi는 리팩토링된 버전을 사용한다고 가정
 from fg.factor_graph_mppi import SampleMessage, SampleVNode, SampleFNode, SampleFactorGraph
 
 from .obstacle import ObstacleMap
@@ -48,6 +47,8 @@ class SampleAgent:
         self._obstacle_weight = obstacle_weight
         self._dist_weight = distance_weight
 
+        
+        self.set_target(target)
         # Create VNodes with sample-based beliefs
         self._vnodes = []
         for i in range(steps):
@@ -60,27 +61,27 @@ class SampleAgent:
 
         # Create FNode for start (strong prior at current state)
         self._fnode_start = SampleFNode('fstart', [self._vnodes[0]], 
-                                        mppi_params={'K': 400, 'lambda': 10.0, 'noise_std': 0.5})
+                                        mppi_params={'K': 1000, 'lambda': 1.0, 'noise_std': 10.0})
         
         # Create FNode for target
         self._fnode_end = SampleFNode('fend', [self._vnodes[-1]],
-                                      mppi_params={'K': 400, 'lambda': 10.0, 'noise_std': 1.0})
+                                      mppi_params={'K': 1000, 'lambda': 1.0, 'noise_std': 10.0})
         
         self.set_state(state) 
-        self.set_target(target)
+
 
         # Create DynaFNode
         self._fnodes_dyna = [DynaSampleFNode(
             f'fd{i}{i+1}', [self._vnodes[i], self._vnodes[i+1]], 
             dt=self._dt, pos_weight=self._dyna_pos_weight, vel_weight=self._dyna_vel_weight,
-            mppi_params={'K': 400, 'lambda': 2.0, 'noise_std': 0.5}
+            mppi_params={'K': 1000, 'lambda': 2.0, 'noise_std': 10.0}
         ) for i in range(steps-1)]
 
         # Create ObstacleFNode
         self._fnodes_obst = [ObstacleSampleFNode(
             f'fo{i}', [self._vnodes[i]], omap=omap, safe_dist=self.r,
             obstacle_weight=self._obstacle_weight,
-            mppi_params={'K': 300, 'lambda': 1.0, 'noise_std': 0.3}
+            mppi_params={'K': 1000, 'lambda': 1.0, 'noise_std': 10.0}
         ) for i in range(1, steps)]
 
         # Build graph
@@ -97,12 +98,42 @@ class SampleAgent:
         self._others = {}
 
     def _initialize_samples(self, state, timestep):
-        """시간 단계별로 샘플 초기화"""
         N = self._num_particles
         samples = np.zeros((N, 4))
-        # 위치는 현재 + 예상 이동
-        samples[:, :2] = state[:2, 0] + state[2:, 0] * self._dt * timestep
-        samples[:, 2:] = state[2:, 0]
+        
+        start_pos = state[:2, 0]
+        start_vel = state[2:, 0]
+        
+        # 기본값 (목표가 없을 경우)
+        target_pos = start_pos
+        target_vel = start_vel
+
+        # 목표가 설정되어 있으면 해당 값 사용
+        if self._target is not None:
+            target_pos = self._target[:2, 0]
+            target_vel = self._target[2:, 0]
+
+        # 1. 위치(Position) 보간
+        # alpha: 0.0 (timestep 0) -> 1.0 (timestep steps-1)
+        alpha = timestep / (self._steps - 1) if self._steps > 1 else 0.0
+        current_pos = (1.0 - alpha) * start_pos + alpha * target_pos
+        
+        # 2. 속도(Velocity) 계산
+        # 전체 경로를 이동하는 데 필요한 평균 속도
+        total_time = self._steps * self._dt
+        if total_time > 1e-6:
+             # (타겟 위치 - 시작 위치) / 전체 시간
+            current_vel = (target_pos - start_pos) / total_time
+        else:
+            current_vel = start_vel # 시간이 0이면 시작 속도 사용
+
+        # 시작점(t=0)에서는 시작 속도를 사용하고, 그 외에는 계산된 평균 속도 사용
+        if timestep == 0:
+             current_vel = start_vel
+
+        samples[:, :2] = current_pos
+        samples[:, 2:] = current_vel
+        
         # 약간의 노이즈 추가
         samples += np.random.randn(N, 4) * 0.1
         return samples
@@ -246,28 +277,11 @@ class SampleAgent:
             return
         vnodes: List[RemoteSampleVNode] = self._others[aname]['v']
         vnode: RemoteSampleVNode = None
-        
-        # --- 🚨 핵심 수정 로직 🚨 ---
-        # 1. 수신된 VName('a0.v1')에서 노드 이름('v1') 부분만 추출
-        try:
-            v_suffix = vname.split('.', 1)[1] # 'a0.v1' -> 'v1'
-        except IndexError:
-            # 접두사 형식이 아닌 경우 (예: 'v1'만 들어온 경우)
-            v_suffix = vname 
-
-        # 2. 로컬 에이전트의 이름(self.name: 'a1')을 사용하여 로컬에서 등록된 이름 재구성
-        # target_vname은 'a1.v1'이 됨
-        target_vname = f'{self.name}.{v_suffix}'
-        # -----------------------------
-        
-        # --- (디버깅용 출력) ---
-        print(f"Target VName for search: {target_vname}")
-        # ---------------------------
+        target_idx = int(vname.split('.')[-1][1:])  # "B.v3" → 3
 
         for v in vnodes:
-            # 재구성된 target_vname으로 검색
-            print(f"Checking vnode name: {v.name}")
-            if v.name == target_vname:
+            idx = int(v.name.split('.')[-1][1:])     # "A.v3" → 3
+            if idx == target_idx:
                 vnode = v
                 break
         if vnode is None:
@@ -301,7 +315,7 @@ class SampleAgent:
         fnodes = [DistSampleFNode(
             f'{on}.f{i}', [vnodes[i-1], self._vnodes[i]], 
             safe_dist=self.r + other.r, distance_weight=self._dist_weight,
-            mppi_params={'K': 300, 'lambda': 1.0, 'noise_std': 0.3}
+            mppi_params={'K': 1000, 'lambda': 1.0, 'noise_std': 10.0}
         ) for i in range(1, self._steps)]
 
         for i in range(1, self._steps):
@@ -428,34 +442,43 @@ class SampleEnv:
     # -----------------------------------------------------------------
     # REFACTOR 3: (실행 순서) propagate (계산) -> com (교환) 순서로 변경
     # -----------------------------------------------------------------
-    def step_plan(self, iters=12):
+    # def step_plan(self, iters=12):
+    #     for a in self._agents:
+    #         a.step_connect()
+        
+    #     for i in range(iters):
+    #         # 1. Factor 업데이트
+    #         for a in self._agents:
+    #             a.update_factors()
+            
+    #         # 2. V→F 메시지
+    #         for a in self._agents:
+    #             a.propagate_v_to_f()
+            
+    #         # 3. 메시지 교환 (v→f)
+    #         for a in self._agents:
+    #             a.step_com()  # v2f 메시지 전송
+            
+    #         # 4. F→V 메시지
+    #         for a in self._agents:
+    #             a.propagate_f_to_v()
+            
+    #         # 5. 메시지 교환 (f→v)
+    #         for a in self._agents:
+    #             a.step_com()  # f2v 메시지 전송
+            
+    #         # 6. Belief 업데이트
+    #         for a in self._agents:
+    #             a.update_beliefs()
+
+    def step_plan(self, iters = 12):
         for a in self._agents:
             a.step_connect()
-        
         for i in range(iters):
-            # 1. Factor 업데이트
             for a in self._agents:
-                a.update_factors()
-            
-            # 2. V→F 메시지
+                a.step_com()
             for a in self._agents:
-                a.propagate_v_to_f()
-            
-            # 3. 메시지 교환 (v→f)
-            for a in self._agents:
-                a.step_com()  # v2f 메시지 전송
-            
-            # 4. F→V 메시지
-            for a in self._agents:
-                a.propagate_f_to_v()
-            
-            # 5. 메시지 교환 (f→v)
-            for a in self._agents:
-                a.step_com()  # f2v 메시지 전송
-            
-            # 6. Belief 업데이트
-            for a in self._agents:
-                a.update_beliefs()
+                a.step_propagate()
 
     def step_move(self):
         """Move step: 실제 이동 시뮬레이션"""

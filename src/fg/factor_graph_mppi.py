@@ -5,6 +5,67 @@ from scipy.stats import gaussian_kde
 from sklearn.mixture import GaussianMixture
 from .graph import Node, Edge, Graph # 원본과 동일
 
+def apply_dynamics_consistent_kernel(samples, dt, pos_noise_scale=0.1, alpha=0.0):
+    """
+    coupling-preserving kernel:
+    - position only noise
+    - velocity recomputed from position difference
+    samples: (K, 4 or 8) 
+      typical = [x0,y0,vx0,vy0,x1,y1,vx1,vy1]
+    """
+    K, D = samples.shape
+    assert D % 4 == 0, "dim must be multiple of 4 (x,y,vx,vy groups)"
+
+    out = samples.copy()
+
+    # each block is 4 dims
+    T = D // 4
+
+    for t in range(T):
+        idx = 4*t
+        x0, y0, vx0, vy0 = out[:, idx+0], out[:, idx+1], out[:, idx+2], out[:, idx+3]
+
+        # If this is last step, no next position to derive velocity
+        if t == T - 1:
+            continue
+
+        # next position block
+        idx2 = 4*(t+1)
+        x1, y1, vx1, vy1 = out[:, idx2+0], out[:, idx2+1], out[:, idx2+2], out[:, idx2+3]
+
+        # 1) noise to position only
+        nx0 = np.random.randn(K) * pos_noise_scale
+        ny0 = np.random.randn(K) * pos_noise_scale
+        nx1 = np.random.randn(K) * pos_noise_scale
+        ny1 = np.random.randn(K) * pos_noise_scale
+
+        x0_new = x0 + nx0
+        y0_new = y0 + ny0
+        x1_new = x1 + nx1
+        y1_new = y1 + ny1
+
+        # 2) recompute velocity
+        vx_re = (x1_new - x0_new) / dt
+        vy_re = (y1_new - y0_new) / dt
+
+        # smoothing
+        vx0_new = alpha * vx0 + (1-alpha) * vx_re
+        vy0_new = alpha * vy0 + (1-alpha) * vy_re
+        vx1_new = vx0_new
+        vy1_new = vy0_new
+
+        out[:, idx+0] = x0_new
+        out[:, idx+1] = y0_new
+        out[:, idx+2] = vx0_new
+        out[:, idx+3] = vy0_new
+
+        out[:, idx2+0] = x1_new
+        out[:, idx2+1] = y1_new
+        out[:, idx2+2] = vx1_new
+        out[:, idx2+3] = vy1_new
+
+    return out
+
 class SampleMessage:
     """
     samples: (N, D) np.ndarray
@@ -156,12 +217,20 @@ class SampleMessage:
         
         return vals
 
-    def resample(self, N_out: int, jitter: float = 1e-3) -> 'SampleMessage':
-        """가중치에 따라 재샘플링(복원추출) 하고 작은 가우시안 노이즈 추가"""
+    def resample(self, N_out: int, jitter: float = 1e-3, dt: float = 0.1) -> 'SampleMessage':
+        """가중치 기반 재샘플링 + coupling-preserving jitter"""
         idx = np.random.choice(self.N, size=N_out, p=self.weights)
         samples = self.samples[idx, :].copy()
+
+        # === 핵심: coupling-preserving jitter 적용 ===
         if jitter > 0:
-            samples += np.random.randn(*samples.shape) * jitter
+            samples = apply_dynamics_consistent_kernel(
+                samples,
+                dt=dt,
+                pos_noise_scale=jitter,
+                alpha=0.0,   # smoothing factor (그대로 유지)
+            )
+
         weights = np.ones(N_out) / N_out
         return SampleMessage(self._dims.copy(), samples, weights)
 
@@ -366,8 +435,9 @@ class SampleFNode(Node):
             assert base.shape[0] == D
             
         # 샘플 생성 (가우시안 노이즈)
-        noises = np.random.randn(K, D) * noise_std
-        samples = base[None, :] + noises
+        samples = np.tile(base, (K,1))
+        samples = apply_dynamics_consistent_kernel(samples, dt=self.mppi_params.get("dt", 0.1), 
+                                                   pos_noise_scale=noise_std, alpha=0.0) 
         costs = cost_fn(samples)  # (K,)
         
         # MPPI 가중치

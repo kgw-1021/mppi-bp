@@ -63,7 +63,7 @@ class ObstacleMap:
         
         # Hard constraint: 충돌
         collision = min_distances < 0
-        costs[collision] = 1e10 
+        costs[collision] = 1e4
         # Soft constraint: safe zone 내부
         inside_safe = (min_distances >= 0) & (min_distances < safe_dist)
         costs[inside_safe] = ((safe_dist - min_distances[inside_safe]) / safe_dist)**2 * 100

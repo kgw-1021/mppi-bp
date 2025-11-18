@@ -33,7 +33,7 @@ class DynaSampleFNode(SampleFNode):
         self._pos_weight = pos_weight
         self._vel_weight = vel_weight
         self.limit_weight = limit_weight
-        self.MAX_SPEED = 1.0
+        self.MAX_SPEED = 5.0
 
     def dynamics_cost(self, samples: np.ndarray) -> np.ndarray:
         """
