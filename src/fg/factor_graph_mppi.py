@@ -2,6 +2,7 @@ import numpy as np
 from typing import List, Dict, Iterable, Tuple, Literal
 import itertools
 from scipy.stats import gaussian_kde
+from scipy.special import logsumexp
 from sklearn.mixture import GaussianMixture
 from .graph import Node, Edge, Graph # 원본과 동일
 
@@ -441,7 +442,10 @@ class SampleFNode(Node):
         costs = cost_fn(samples)  # (K,)
         
         # MPPI 가중치
-        weights = np.exp(-costs / lam)
+        costs = costs - np.min(costs) 
+        logw = -costs / lam
+        logw = logw - logsumexp(logw)  
+        weights = np.exp(logw)
         
         # REFACTOR: 가중치 안정성 (inf, 0, nan 처리)
         if np.all(np.isinf(weights)) or np.all(weights == 0) or not np.all(np.isfinite(weights)):

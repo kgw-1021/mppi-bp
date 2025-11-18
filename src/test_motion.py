@@ -37,10 +37,12 @@ def run_simulation_demo():
     target_b = np.array([50, 50, 0, 0])[:, None]
 
     common_weights = {
-        'obstacle_weight': 100.0,
-        'distance_weight': 80.0,
-        'target_position_weight': 5.0,
+        'obstacle_weight': 1.0,
+        'distance_weight':1.0,
+        'target_position_weight': 10.0,
         'dynamic_position_weight': 10.0,
+        'target_velocity_weight': 1.0,
+        'dynamic_velocity_weight': 1.0,
     }
 
     agent_a = SampleAgent('AgentA', state_a, target_a, 
@@ -63,8 +65,8 @@ def run_simulation_demo():
     # 3. Matplotlib 시각화 설정
     fig, ax = plt.subplots(figsize=(12, 10))
     ax.set_aspect('equal')
-    ax.set_xlim(0, 500)
-    ax.set_ylim(0, 400)
+    ax.set_xlim(-100, 600)
+    ax.set_ylim(-100, 500)
     ax.set_title("Decentralized Agent Planning (MPPI Factor Graph)")
     ax.set_xlabel("X-axis")
     ax.set_ylabel("Y-axis")

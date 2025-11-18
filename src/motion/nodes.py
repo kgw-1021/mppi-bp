@@ -24,7 +24,7 @@ class DynaSampleFNode(SampleFNode):
     """동역학 제약 팩터 노드 (MPPI 기반)"""
     def __init__(self, name: str, vnodes: List[SampleVNode], 
                  dt: float = 0.1, pos_weight: float = 10, vel_weight: float = 2, 
-                 limit_weight: float = 100.0, mppi_params: dict = None) -> None:
+                 limit_weight: float = 10.0, mppi_params: dict = None) -> None:
         assert len(vnodes) == 2
         if mppi_params is None:
             mppi_params = {'K': 400, 'lambda': 1.0, 'noise_std': 0.5}
