@@ -8,7 +8,7 @@ from fg.gaussian import Gaussian
 from fg.factor_graph import VNode, FNode, FactorGraph
 
 # MPPI Method
-from fg.factor_graph_mppi import SampleMessage, SampleVNode, SampleFNode, SampleFactorGraph
+from fg.factor_graph_mppi_loc import SampleMessage, SampleVNode, SampleFNode, SampleFactorGraph
 
 
 # ==================== GBP용 비선형 팩터 (선형화 사용) ====================
@@ -387,13 +387,13 @@ def run_full_comparison(n_vars: int = 5, max_iters: int = 50,
     
     # 요약 테이블
     print(f"\n{'='*70}")
-    print(f"{'Graph Type':<20} {'GBP Final RMSE':<20} {'Sample Final RMSE':<20} {'Winner':<10}")
+    print(f"{'Graph Type':<20} {'GBP Final RMSE':<20} {'MPPI-BP Final RMSE':<20} {'Winner':<10}")
     print(f"{'='*70}")
     for gtype in graph_types:
         res = results[gtype]
         gbp_final = f"{res['gbp_mean'][-1]:.6f}±{res['gbp_std'][-1]:.6f}"
         sample_final = f"{res['sample_mean'][-1]:.6f}±{res['sample_std'][-1]:.6f}"
-        winner = 'GBP' if res['gbp_mean'][-1] < res['sample_mean'][-1] else 'MPPI-BP'
+        winner = 'GBP' if res['gbp_mean'][-1] < res['sample_mean'][-1] else 'MPPI-BP (ours)'
         print(f"{gtype.upper():<20} {gbp_final:<20} {sample_final:<20} {winner:<10}")
     print(f"{'='*70}")
 

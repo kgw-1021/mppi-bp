@@ -63,12 +63,12 @@ class ObstacleMap:
         
         # 1. Hard constraint: 충돌
         collision = min_distances < 0
-        costs[collision] = 1e4
+        costs[collision] = 1e5
 
         # 2. Soft constraint: safe zone 내부 (강한 회피 신호)
         inside_safe = (min_distances >= 0) & (min_distances < safe_dist)
         # 기존 로직 유지
-        costs[inside_safe] = ((safe_dist - min_distances[inside_safe]) / safe_dist)**2 * 100
+        costs[inside_safe] = ((safe_dist - min_distances[inside_safe]) / safe_dist) * 100
         
         # 3. [추가] Long-tail constraint: safe zone 밖 (약한 회피 신호)
         # safe_dist보다 멀어도, 장애물에 가까운 것보다 먼 것이 '아주 조금' 더 좋다는 신호

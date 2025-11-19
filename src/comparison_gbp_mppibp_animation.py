@@ -5,7 +5,7 @@ from typing import List, Dict, Tuple, Callable
 import networkx as nx
 from fg.factor_graph import FactorGraph, VNode, FNode
 from fg.gaussian import Gaussian
-from fg.factor_graph_mppi import SampleFactorGraph, SampleVNode, SampleFNode, SampleMessage
+from fg.factor_graph_mppi_loc import SampleFactorGraph, SampleVNode, SampleFNode, SampleMessage
 
 # ==================== GBP용 비선형 팩터 (Jittering이 잘 발생하도록 수정) ====================
 class NonlinearFNodeGBP(FNode):

@@ -34,11 +34,13 @@ def run_simulation_demo(save_animation=True, output_dir='./animations'):
     
     state_a = np.array([50, 50, 0, 0])[:, None]
     target_a = np.array([450, 350, 0, 0])[:, None]
+    state_b = np.array([450, 350, 0, 0])[:, None]
+    target_b = np.array([50, 50, 0, 0])[:, None]
 
     common_weights = {
-        'obstacle_weight': 0.1,       
+        'obstacle_weight': 1.0,     
         'distance_weight': 0.5,       
-        'target_position_weight': 0.01,
+        'target_position_weight': 0.1,
         'dynamic_position_weight': 0.01,
         'target_velocity_weight': 0.01,
         'dynamic_velocity_weight': 0.01,
@@ -48,11 +50,17 @@ def run_simulation_demo(save_animation=True, output_dir='./animations'):
     agent_a = SampleAgent('AgentA', state_a, target_a, 
                           steps=global_plan_steps, radius=agent_radius, omap=omap,
                           **common_weights)
+    agent_b = SampleAgent('AgentB', state_b, target_b, 
+                          steps=global_plan_steps, radius=agent_radius, omap=omap,
+                          **common_weights)
 
     env.add_agent(agent_a)
-    agents = [agent_a]
+    env.add_agent(agent_b)
 
-    colors = {agent_a.name: '#FF5733'}
+    agents = [agent_a, agent_b]
+
+    colors = {agent_a.name: '#FF5733',
+              agent_b.name: "#1900FF"}
 
     # 3. Matplotlib 시각화 설정
     fig, ax = plt.subplots(figsize=(12, 10))
@@ -104,7 +112,7 @@ def run_simulation_demo(save_animation=True, output_dir='./animations'):
                              linewidth=2.0, alpha=0.7, zorder=20)
         
         history_line, = ax.plot([], [], '.-', color=color, 
-                                linewidth=1.0, alpha=0.3, zorder=10)
+                                linewidth=3.0, alpha=0.7, zorder=10)
         
         artist_map[name] = {
             'body': body,

@@ -70,38 +70,68 @@ class SampleAgent:
 
         # Goal Factor 생성
         self._fnode_goal = GoalSampleFNode(
-            name=f"f_goal",
-            vnodes=[v_last],
-            goal=self._target,   
-            goal_pos_weight=self._target_pos_weight,
-            goal_vel_weight=self._target_vel_weight,
-            mppi_params={'K': 1000, 'lambda': 10.0, 'noise_std': 10.0},
-            dt=self._dt,
-            _message_exponent=1.0
-)
+        name=f"f_goal_terminal",
+        vnodes=[self._vnodes[-1]], # 마지막 노드만 연결
+        goal=self._target,   
+        goal_pos_weight=self._target_pos_weight, # [핵심] 최종 도달은 매우 중요함 (10배)
+        goal_vel_weight=0.0,
+        mppi_params={'K': 1000, 'lambda': 5.0, 'noise_std': 10.0}, # lambda를 낮춰서 민감하게 반응
+        dt=self._dt,
+        _message_exponent=2.0 # 메시지 영향력 강화
+        )       
+
+        self._fnodes_running_goals = []
+        for i in range(1, steps - 1): # v1 ~ v_last-1 (v0는 고정, v_last는 Terminal)
+            fg = GoalSampleFNode(
+                name=f"f_goal_run_{i}",
+                vnodes=[self._vnodes[i]],
+                goal=self._target,
+                goal_pos_weight=self._target_pos_weight, 
+                goal_vel_weight=0.0, 
+                mppi_params={'K': 1000, 'lambda': 20.0, 'noise_std': 10.0}, # lambda를 높여서 관대하게
+                dt=self._dt,
+                _message_exponent=1.0
+            )
+            self._fnodes_running_goals.append(fg)
 
         # Create DynaFNode
-        self._fnodes_dyna = [DynaSampleFNode(
-            f'fd{i}{i+1}', [self._vnodes[i], self._vnodes[i+1]], 
-            dt=self._dt, pos_weight=self._dyna_pos_weight, vel_weight=self._dyna_vel_weight, limit_weight=self.spd_limit_weight,
-            mppi_params={'K': 1000, 'lambda': 100.0, 'noise_std': 5.0}, _message_exponent=1.0
-        ) for i in range(steps-1)]
+        # self._fnodes_dyna = []
+        # for i in range(steps - 1):
+        #     # 첫 번째 구간은 엄격하게 (Low Noise, High Lambda)
+        #     if i == 0:
+        #         mppi_params = {'K': 1000, 'lambda': 10.0, 'noise_std': 1.0} # noise 줄임
+        #     else:
+        #         # 뒷부분은 자유롭게 탐색 (High Noise)
+        #         mppi_params = {'K': 1000, 'lambda': 100.0, 'noise_std': 1.0}
+
+        #     dyna = DynaSampleFNode(
+        #         f'fd{i}{i+1}', [self._vnodes[i], self._vnodes[i+1]], 
+        #         dt=self._dt, 
+        #         pos_weight=self._dyna_pos_weight, 
+        #         vel_weight=self._dyna_vel_weight*0, 
+        #         limit_weight=self.spd_limit_weight*0,
+        #         mppi_params=mppi_params, 
+        #         _message_exponent=0.5
+        #     )
+        #     self._fnodes_dyna.append(dyna)
 
         # Create ObstacleFNode
         self._fnodes_obst = [ObstacleSampleFNode(
-            f'fo{i}', [self._vnodes[i]], omap=omap, safe_dist=self.r*3,
+            f'fo{i}', [self._vnodes[i]], omap=omap, safe_dist=self.r*2,
             obstacle_weight=self._obstacle_weight,
-            mppi_params={'K': 1000, 'lambda': 100.0, 'noise_std': 20.0},
+            mppi_params={'K': 1000, 'lambda': 100.0, 'noise_std': 10.0},
             dt=self._dt, _message_exponent=1.0
         ) for i in range(1, steps)]
 
         # Build graph
         self._graph = SampleFactorGraph()
         self._graph.connect(self._vnodes[0], self._fnode_start)
-        for v, f in zip(self._vnodes[:-1], self._fnodes_dyna):
+        for v, f in zip(self._vnodes[1:-1], self._fnodes_running_goals):
             self._graph.connect(v, f)
-        for v, f in zip(self._vnodes[1:], self._fnodes_dyna):
-            self._graph.connect(v, f)
+        # for v, f in zip(self._vnodes[:-1], self._fnodes_dyna):
+        #     self._graph.connect(v, f)
+        # for v, f in zip(self._vnodes[1:], self._fnodes_dyna):
+        #     self._graph.connect(v, f)
         for v, f in zip(self._vnodes[1:], self._fnodes_obst):
             self._graph.connect(v, f)
         self._graph.connect(v_last, self._fnode_goal)
@@ -225,7 +255,7 @@ class SampleAgent:
         }
         
         # Loopy BP with MPPI
-        self._graph.loopy_propagate(steps=5, factor_costs=factor_costs)
+        self._graph.loopy_propagate(steps=1, factor_costs=factor_costs)
 
     def step_move(self):
         """Move step: 실제 이동 시뮬레이션 (belief shift + v0 재설정)"""

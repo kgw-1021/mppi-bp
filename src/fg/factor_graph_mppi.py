@@ -34,10 +34,6 @@ def apply_dynamics_consistent_kernel(samples, dt, pos_noise_scale=0.1, alpha=0.0
         x_new = x + nx
         y_new = y + ny
 
-        # For single block we can't compute velocity from next pos.
-        # Option A: leave velocity unchanged (conservative).
-        # Option B: add small velocity noise consistent with position noise.
-        # Here we apply small velocity jitter proportional to noise_scale/dt.
         vx_new = vx + (nx / max(dt, 1e-6)) * 0.0  # keep zero factor by default
         vy_new = vy + (ny / max(dt, 1e-6)) * 0.0
 
@@ -48,7 +44,6 @@ def apply_dynamics_consistent_kernel(samples, dt, pos_noise_scale=0.1, alpha=0.0
 
         return out
 
-    # Multi-block case: perturb pairs and recompute velocities
     for t in range(T):
         idx = 4 * t
         # if last block, still perturb positions (but no recompute of next vel)
@@ -119,7 +114,7 @@ class SampleMessage:
         if self.samples.ndim == 1:
             self.samples = self.samples.reshape(-1, 1)
 
-        self.samples = self.samples.squeeze()
+        # self.samples = self.samples.squeeze()
 
         assert self.samples.ndim == 2 and self.samples.shape[1] == len(self._dims), \
             f"Samples shape {self.samples.shape} mismatch with dims {self._dims}"
@@ -499,7 +494,7 @@ class SampleFNode(Node):
         logw = logw - logsumexp(logw)  
         weights = np.exp(logw)
         
-        # print(f"Updated factor '{self.name}' with MPPI: cost range [{np.min(costs):.3f}, {np.max(costs):.3f}], mean of cost {np.mean(costs):.3f}, ESS inverse {np.sum(weights**2):.5f}")
+        print(f"Updated factor '{self.name}' with MPPI: cost range [{np.min(costs):.3f}, {np.max(costs):.3f}], mean of cost {np.mean(costs):.3f}, Lambda {lam:.5f}")
         # REFACTOR: 가중치 안정성 (inf, 0, nan 처리)
         if np.all(np.isinf(weights)) or np.all(weights == 0) or not np.all(np.isfinite(weights)):
             weights = np.ones_like(weights)
@@ -571,9 +566,9 @@ class SampleFNode(Node):
         out_msg = SampleMessage(var_dims, samples_out, new_weights)
         out_msg.normalize() # 정규화 필수
 
-        weighted_vals = out_msg.weights ** self.message_exponent
-        weighted_vals = weighted_vals / np.sum(weighted_vals)
-        out_msg.weights = weighted_vals
+        # weighted_vals = out_msg.weights ** self.message_exponent
+        # weighted_vals = weighted_vals / np.sum(weighted_vals)
+        # out_msg.weights = weighted_vals
 
         out_msg = out_msg.resample(min(500, out_msg.N), jitter=1e-4)
 

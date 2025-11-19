@@ -60,15 +60,17 @@ class DynaSampleFNode(SampleFNode):
         pos_cost = (dx**2 + dy**2) * self._pos_weight
         
         # 속도 제약: vx1 ≈ vx0 (부드러운 움직임)
-        dvx = vx1 - vx0
-        dvy = vy1 - vy0
-        vel_cost = (dvx**2 + dvy**2) * self._vel_weight
+        # dvx = vx1 - vx0
+        # dvy = vy1 - vy0
+        # vel_cost = (dvx**2 + dvy**2) * self._vel_weight
         
         speed1 = np.sqrt(vx1**2 + vy1**2)
         violation = np.maximum(0, speed1 - self.MAX_SPEED)
         max_vel_cost = violation**2 * self.limit_weight
 
-        costs = pos_cost + vel_cost + max_vel_cost
+        # costs = pos_cost + vel_cost + max_vel_cost
+        costs = pos_cost + max_vel_cost
+
         return costs
 
     def update_factor_with_mppi(self, cost_fn=None, base_trajectory: np.ndarray = None):
@@ -128,7 +130,6 @@ class ObstacleSampleFNode(SampleFNode):
         
         if base_trajectory is None:
             v_belief = self._vnodes[0].belief
-            # ✅ None 체크
             if v_belief is None:
                 return
             base = np.average(v_belief.samples, weights=v_belief.weights, axis=0)
