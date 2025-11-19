@@ -9,31 +9,38 @@ class RemoteSampleVNode(SampleVNode):
     """다른 에이전트의 변수 노드 (원격)"""
     def __init__(self, name: str, dims: List[str], belief: SampleMessage = None) -> None:
         super().__init__(name, dims, belief)
-        self._msgs = {}
+        self._outgoing_msgs = {}  # edge -> SampleMessage 매핑
 
     def update_belief(self) -> SampleMessage:
-        # 원격 노드는 자체적으로 belief 업데이트하지 않음
-        return None
+        """원격 노드는 상대방이 push한 belief를 그대로 사용"""
+        return self._belief
     
     def calc_msg(self, edge):
-        # 원격에서 받은 메시지 사용
-        return self._msgs.get(edge, None)
+        """원격 노드의 메시지는 push_msg를 통해 미리 설정됨"""
+        return self._outgoing_msgs.get(edge, None)
+    
+    def set_outgoing_msg(self, edge, msg: SampleMessage):
+        """외부에서 메시지를 설정 (push_msg에서 호출)"""
+        self._outgoing_msgs[edge] = msg
 
 
 class DynaSampleFNode(SampleFNode):
     """동역학 제약 팩터 노드 (MPPI 기반)"""
     def __init__(self, name: str, vnodes: List[SampleVNode], 
                  dt: float = 0.1, pos_weight: float = 10, vel_weight: float = 2, 
-                 limit_weight: float = 10.0, mppi_params: dict = None) -> None:
+                 limit_weight: float = 0.1, mppi_params: dict = None, _message_exponent=1.0) -> None:
         assert len(vnodes) == 2
         if mppi_params is None:
             mppi_params = {'K': 400, 'lambda': 1.0, 'noise_std': 0.5}
-        super().__init__(name, vnodes, factor_samples=None, mppi_params=mppi_params)
+        
+        mppi_params['dt'] = dt
+        
+        super().__init__(name, vnodes, factor_samples=None, mppi_params=mppi_params, message_exponent=_message_exponent)
         self._dt = dt
         self._pos_weight = pos_weight
         self._vel_weight = vel_weight
         self.limit_weight = limit_weight
-        self.MAX_SPEED = 5.0
+        self.MAX_SPEED = 80.0
 
     def dynamics_cost(self, samples: np.ndarray) -> np.ndarray:
         """
@@ -59,7 +66,6 @@ class DynaSampleFNode(SampleFNode):
         
         speed1 = np.sqrt(vx1**2 + vy1**2)
         violation = np.maximum(0, speed1 - self.MAX_SPEED)
-
         max_vel_cost = violation**2 * self.limit_weight
 
         costs = pos_cost + vel_cost + max_vel_cost
@@ -67,22 +73,22 @@ class DynaSampleFNode(SampleFNode):
 
     def update_factor_with_mppi(self, cost_fn=None, base_trajectory: np.ndarray = None):
         """MPPI로 팩터 업데이트"""
-        # cost_fn이 제공되지 않으면 자체 cost function 사용
         if cost_fn is None:
             cost_fn = self.dynamics_cost
         
-        # ✅ 연결된 변수들의 현재 belief 가중 평균으로 base 설정
         if base_trajectory is None:
             v0_belief = self._vnodes[0].belief
             v1_belief = self._vnodes[1].belief
+
+            if v0_belief is None or v1_belief is None:
+                return
             
-            # ✅ 가중 평균 사용
             v0_mean = np.average(v0_belief.samples, weights=v0_belief.weights, axis=0)
             v1_mean = np.average(v1_belief.samples, weights=v1_belief.weights, axis=0)
             base = np.concatenate([v0_mean, v1_mean])
         else:
             base = base_trajectory
-        
+        # print("DynamicsSampleFNode cost:\n")
         super().update_factor_with_mppi(cost_fn, base_trajectory=base)
 
 
@@ -90,11 +96,15 @@ class ObstacleSampleFNode(SampleFNode):
     """장애물 회피 팩터 노드 (MPPI 기반)"""
     def __init__(self, name: str, vnodes: List[SampleVNode], 
                  omap: ObstacleMap = None, safe_dist: float = 5,
-                 obstacle_weight: float = 50, mppi_params: dict = None) -> None:
+                 obstacle_weight: float = 50, mppi_params: dict = None,
+                 dt: float = 0.1, _message_exponent = 1.0) -> None:
         assert len(vnodes) == 1
         if mppi_params is None:
             mppi_params = {'K': 400, 'lambda': 1.0, 'noise_std': 0.3}
-        super().__init__(name, vnodes, factor_samples=None, mppi_params=mppi_params)
+        
+        mppi_params['dt'] = dt
+        
+        super().__init__(name, vnodes, factor_samples=None, mppi_params=mppi_params, message_exponent=_message_exponent)
         self._omap = omap
         self._safe_dist = safe_dist
         self._obstacle_weight = obstacle_weight
@@ -113,17 +123,18 @@ class ObstacleSampleFNode(SampleFNode):
 
     def update_factor_with_mppi(self, cost_fn=None, base_trajectory: np.ndarray = None):
         """MPPI로 팩터 업데이트"""
-        # cost_fn이 제공되지 않으면 자체 cost function 사용
         if cost_fn is None:
             cost_fn = self.obstacle_cost
         
         if base_trajectory is None:
             v_belief = self._vnodes[0].belief
-            # ✅ 가중 평균 사용 (기존: samples.mean())
+            # ✅ None 체크
+            if v_belief is None:
+                return
             base = np.average(v_belief.samples, weights=v_belief.weights, axis=0)
         else:
             base = base_trajectory
-        
+        # print("ObstacleSampleFNode cost:\n")
         super().update_factor_with_mppi(cost_fn, base_trajectory=base)
 
 
@@ -131,11 +142,14 @@ class DistSampleFNode(SampleFNode):
     """에이전트 간 충돌 회피 팩터 노드 (MPPI 기반)"""
     def __init__(self, name: str, vnodes: List[SampleVNode], 
                  safe_dist: float = 20, distance_weight: float = 15,
-                 mppi_params: dict = None) -> None:
+                 mppi_params: dict = None, dt: float = 0.1, _message_exponent = 1.0) -> None:
         assert len(vnodes) == 2
         if mppi_params is None:
             mppi_params = {'K': 400, 'lambda': 1.0, 'noise_std': 0.3}
-        super().__init__(name, vnodes, factor_samples=None, mppi_params=mppi_params)
+        
+        mppi_params['dt'] = dt
+        
+        super().__init__(name, vnodes, factor_samples=None, mppi_params=mppi_params, message_exponent=_message_exponent)
         self._safe_dist = safe_dist
         self._distance_weight = distance_weight
 
@@ -161,7 +175,6 @@ class DistSampleFNode(SampleFNode):
 
     def update_factor_with_mppi(self, cost_fn=None, base_trajectory: np.ndarray = None):
         """MPPI로 팩터 업데이트"""
-        # cost_fn이 제공되지 않으면 자체 cost function 사용
         if cost_fn is None:
             cost_fn = self.distance_cost
         
@@ -169,11 +182,88 @@ class DistSampleFNode(SampleFNode):
             v0_belief = self._vnodes[0].belief
             v1_belief = self._vnodes[1].belief
             
-            # ✅ 가중 평균 사용 (기존: samples.mean())
+            if v0_belief is None or v1_belief is None:
+                return
+            
             v0_mean = np.average(v0_belief.samples, weights=v0_belief.weights, axis=0)
             v1_mean = np.average(v1_belief.samples, weights=v1_belief.weights, axis=0)
             base = np.concatenate([v0_mean, v1_mean])
         else:
             base = base_trajectory
-        
+        # print("DistSampleFNode cost:\n")
+        super().update_factor_with_mppi(cost_fn, base_trajectory=base)
+
+class GoalSampleFNode(SampleFNode):
+    """
+    목표지점(anchor) 팩터 노드.
+    - GBP의 anchor 역할과 동일
+    - 마지막 변수노드를 목표 위치로 강하게 끌어당김
+    """
+    def __init__(
+        self, 
+        name: str, 
+        vnodes: List[SampleVNode],
+        goal: Tuple[float, float], 
+        goal_pos_weight: float = 50.0,
+        goal_vel_weight: float = 50.0,
+        mppi_params: dict = None,
+        dt: float = 0.1,
+        _message_exponent = 1.0
+    ) -> None:
+
+        assert len(vnodes) == 1  # unary factor
+
+        # 기본 MPPI anchor 설정 (강하게 끌어당기도록)
+        if mppi_params is None:
+            mppi_params = {
+                'K': 800,
+                'lambda': 10.0,       # 작을수록 anchor 효과 강함
+                'noise_std': 0.2,     # 작은 noise로 goal 근처 탐색
+            }
+
+        mppi_params['dt'] = dt
+
+        super().__init__(name, vnodes, factor_samples=None, mppi_params=mppi_params, message_exponent=_message_exponent)
+
+        self._goal = np.array(goal, dtype=float)
+        self._goal_pos_weight = goal_pos_weight
+        self._goal_vel_weight = goal_vel_weight 
+
+    def goal_cost(self, samples: np.ndarray) -> np.ndarray:
+        """
+        samples: (K,4) [x,y,vx,vy]
+        목표점까지의 거리 비용
+        """
+        x = samples[:, 0]
+        y = samples[:, 1]
+        vx = samples[:, 2]
+        vy = samples[:, 3]
+
+        # 위치 비용 (L2 distance^2)
+        dx = x - self._goal[0]
+        dy = y - self._goal[1]
+        pos_cost = dx**2 + dy**2
+        vel_cost = vx**2 + vy**2
+
+        scale_factor = 1.0 / (pos_cost + 1e-4)
+        dynamic_vel_weight = self._goal_vel_weight * scale_factor
+
+        goal_cost = (pos_cost * self._goal_pos_weight * 2) + (vel_cost * dynamic_vel_weight)
+
+        return goal_cost
+
+    def update_factor_with_mppi(self, cost_fn=None, base_trajectory: np.ndarray = None):
+        """
+        MPPI 업데이트. base trajectory는 항상 belief의 평균으로 설정.
+        """
+        if cost_fn is None:
+            cost_fn = self.goal_cost
+
+        v_belief = self._vnodes[0].belief
+        if v_belief is None:
+            return
+
+        # base: 현재 belief의 평균
+        base = np.average(v_belief.samples, weights=v_belief.weights, axis=0)
+        # print("GoalSampleFNode cost:\n")
         super().update_factor_with_mppi(cost_fn, base_trajectory=base)

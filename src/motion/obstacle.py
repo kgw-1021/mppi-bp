@@ -61,11 +61,22 @@ class ObstacleMap:
 
         costs = np.zeros_like(min_distances)
         
-        # Hard constraint: 충돌
+        # 1. Hard constraint: 충돌
         collision = min_distances < 0
         costs[collision] = 1e4
-        # Soft constraint: safe zone 내부
+
+        # 2. Soft constraint: safe zone 내부 (강한 회피 신호)
         inside_safe = (min_distances >= 0) & (min_distances < safe_dist)
+        # 기존 로직 유지
         costs[inside_safe] = ((safe_dist - min_distances[inside_safe]) / safe_dist)**2 * 100
+        
+        # 3. [추가] Long-tail constraint: safe zone 밖 (약한 회피 신호)
+        # safe_dist보다 멀어도, 장애물에 가까운 것보다 먼 것이 '아주 조금' 더 좋다는 신호
+        outside_safe = min_distances >= safe_dist
+        # 거리가 멀수록 0에 수렴하는 작은 값 (예: 1/거리)
+        # 100.0 은 weight 조절용, 1.0은 0나누기 방지
+        costs[outside_safe] = 1.0 / (min_distances[outside_safe] + 1) 
+
+        # print("Obstacle costs:", costs)
         
         return costs

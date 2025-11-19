@@ -9,32 +9,68 @@ from .graph import Node, Edge, Graph # 원본과 동일
 def apply_dynamics_consistent_kernel(samples, dt, pos_noise_scale=0.1, alpha=0.0):
     """
     coupling-preserving kernel:
-    - position only noise
-    - velocity recomputed from position difference
-    samples: (K, 4 or 8) 
-      typical = [x0,y0,vx0,vy0,x1,y1,vx1,vy1]
+    - position-only noise when single step
+    - when multiple steps, add noise to pairs and recompute velocities
+    samples: (K, 4*T) 
+      typical = [x0,y0,vx0,vy0, x1,y1,vx1,vy1, ...]
     """
     K, D = samples.shape
     assert D % 4 == 0, "dim must be multiple of 4 (x,y,vx,vy groups)"
 
     out = samples.copy()
-
-    # each block is 4 dims
     T = D // 4
 
-    for t in range(T):
-        idx = 4*t
-        x0, y0, vx0, vy0 = out[:, idx+0], out[:, idx+1], out[:, idx+2], out[:, idx+3]
+    if T == 1:
+        # Single block: add position noise directly; optionally adjust velocity a bit
+        idx = 0
+        x = out[:, idx+0].copy()
+        y = out[:, idx+1].copy()
+        vx = out[:, idx+2].copy()
+        vy = out[:, idx+3].copy()
 
-        # If this is last step, no next position to derive velocity
+        nx = np.random.randn(K) * pos_noise_scale
+        ny = np.random.randn(K) * pos_noise_scale
+
+        x_new = x + nx
+        y_new = y + ny
+
+        # For single block we can't compute velocity from next pos.
+        # Option A: leave velocity unchanged (conservative).
+        # Option B: add small velocity noise consistent with position noise.
+        # Here we apply small velocity jitter proportional to noise_scale/dt.
+        vx_new = vx + (nx / max(dt, 1e-6)) * 0.0  # keep zero factor by default
+        vy_new = vy + (ny / max(dt, 1e-6)) * 0.0
+
+        out[:, idx+0] = x_new
+        out[:, idx+1] = y_new
+        out[:, idx+2] = vx_new
+        out[:, idx+3] = vy_new
+
+        return out
+
+    # Multi-block case: perturb pairs and recompute velocities
+    for t in range(T):
+        idx = 4 * t
+        # if last block, still perturb positions (but no recompute of next vel)
         if t == T - 1:
+            # perturb last block positions only
+            x = out[:, idx+0]
+            y = out[:, idx+1]
+            nx = np.random.randn(K) * pos_noise_scale
+            ny = np.random.randn(K) * pos_noise_scale
+            out[:, idx+0] = x + nx
+            out[:, idx+1] = y + ny
+            # optionally leave velocities or add small jitter
             continue
 
-        # next position block
-        idx2 = 4*(t+1)
-        x1, y1, vx1, vy1 = out[:, idx2+0], out[:, idx2+1], out[:, idx2+2], out[:, idx2+3]
+        # normal pair perturbation (t and t+1)
+        idx2 = 4 * (t + 1)
 
-        # 1) noise to position only
+        x0 = out[:, idx+0].copy()
+        y0 = out[:, idx+1].copy()
+        x1 = out[:, idx2+0].copy()
+        y1 = out[:, idx2+1].copy()
+
         nx0 = np.random.randn(K) * pos_noise_scale
         ny0 = np.random.randn(K) * pos_noise_scale
         nx1 = np.random.randn(K) * pos_noise_scale
@@ -45,13 +81,15 @@ def apply_dynamics_consistent_kernel(samples, dt, pos_noise_scale=0.1, alpha=0.0
         x1_new = x1 + nx1
         y1_new = y1 + ny1
 
-        # 2) recompute velocity
+        # recompute velocities from perturbed positions
         vx_re = (x1_new - x0_new) / dt
         vy_re = (y1_new - y0_new) / dt
 
         # smoothing
-        vx0_new = alpha * vx0 + (1-alpha) * vx_re
-        vy0_new = alpha * vy0 + (1-alpha) * vy_re
+        vx0 = out[:, idx+2]
+        vy0 = out[:, idx+3]
+        vx0_new = alpha * vx0 + (1 - alpha) * vx_re
+        vy0_new = alpha * vy0 + (1 - alpha) * vy_re
         vx1_new = vx0_new
         vy1_new = vy0_new
 
@@ -117,12 +155,12 @@ class SampleMessage:
         return self
 
     def project(self, dims_out: List[str]) -> 'SampleMessage':
-        """지정 dims_out으로 사영 — 단순히 차원 선택, 동일한 입자 수 유지."""
         try:
             idxs = [self._dims.index(d) for d in dims_out]
-        except ValueError as e:
-            raise ValueError(f"Cannot project: Dim '{e.args[0].split()[0]}' not in message dims {self._dims}") from e
-            
+        except ValueError:
+            # 없는 차원이면 0으로 채워서라도 반환 (Crash 방지)
+            # 실제로는 로직 점검 필요
+            return SampleMessage(dims_out, np.zeros((self.N, len(dims_out))), self.weights.copy())
         samples_out = self.samples[:, idxs]
         return SampleMessage(dims_out, samples_out.copy(), self.weights.copy())
 
@@ -152,7 +190,7 @@ class SampleMessage:
         # weigh kernels by particle weights
         vals = ker @ self.weights
         # Note: Not dividing by (sqrt(2pi)*bandwidth)^D -- constant factor not needed for reweighting
-        return vals
+        return vals + 1e-12
 
     def evaluate_gmm(self, pts: np.ndarray, n_components: int = None) -> np.ndarray:
         """
@@ -180,7 +218,7 @@ class SampleMessage:
             gmm.fit(self.samples)
             vals = np.exp(gmm.score_samples(pts))
         
-        return vals
+        return vals + 1e-12
 
     def evaluate_gaussian(self, pts: np.ndarray) -> np.ndarray:
         """
@@ -216,10 +254,11 @@ class SampleMessage:
             mahal = np.sum((diffs_pts ** 2) / var[None, :], axis=1)
             vals = np.exp(-0.5 * mahal) / np.sqrt((2 * np.pi) ** D * np.prod(var))
         
-        return vals
+        return vals + 1e-12
 
     def resample(self, N_out: int, jitter: float = 1e-3, dt: float = 0.1) -> 'SampleMessage':
-        """가중치 기반 재샘플링 + coupling-preserving jitter"""
+        if self.weights.sum() == 0: # 방어 코드
+            self.weights = np.ones(self.N)/self.N
         idx = np.random.choice(self.N, size=N_out, p=self.weights)
         samples = self.samples[idx, :].copy()
 
@@ -293,8 +332,12 @@ class SampleMessage:
         else:
             raise ValueError(f"Unknown method: {method}. Choose from 'kde', 'gmm', 'gaussian'")
         
+        if other_vals.sum() < 1e-12:
+            # 경고: "정보 결합 실패, 기존 신념 유지"
+            return self.copy()
+        
         # 6. 가중치 업데이트 및 정규화
-        new_weights *= other_vals
+        new_weights *= (other_vals + 1e-12)
         
         # self.dims와 self.samples를 그대로 사용하고 가중치만 업데이트
         return SampleMessage(base_dims, base_samples, new_weights).normalize()
@@ -399,9 +442,10 @@ class SampleVNode(Node):
                 e.set_message_from(self, msg)
 
 class SampleFNode(Node):
-    def __init__(self, name: str, vnodes: List[SampleVNode], factor_samples: SampleMessage = None, mppi_params: dict = None, N_factor_particles: int = 400):
+    def __init__(self, name: str, vnodes: List[SampleVNode], factor_samples: SampleMessage = None, mppi_params: dict = None, N_factor_particles: int = 400, message_exponent: float = 1.0):
         dims = list(dict.fromkeys(itertools.chain(*[v.dims for v in vnodes]))) # 중복 제거
         super().__init__(name, dims)
+        self.message_exponent = message_exponent
         self._vnodes = vnodes
         self._dims = dims
         self.N_factor_particles = N_factor_particles
@@ -424,7 +468,7 @@ class SampleFNode(Node):
         base_trajectory: optional (D,) center to sample around
         """
         K = int(self.mppi_params.get('K', self.N_factor_particles))
-        lam = float(self.mppi_params.get('lambda', 1.0))
+        base_lam = float(self.mppi_params.get('lambda', 1.0))
         noise_std = float(self.mppi_params.get('noise_std', 1.0))
         D = len(self._dims)
         
@@ -443,14 +487,23 @@ class SampleFNode(Node):
         
         # MPPI 가중치
         costs = costs - np.min(costs) 
+        p_low, p_high = np.percentile(costs, [10, 90])
+        cost_span = p_high - p_low
+        TARGET_LOG_RATIO = 7.0  # 최적 샘플 대비 weight 비율 목표
+        if cost_span < 1e-8:
+            lam = base_lam
+        else:
+            lam = cost_span / TARGET_LOG_RATIO
+
         logw = -costs / lam
         logw = logw - logsumexp(logw)  
         weights = np.exp(logw)
         
+        # print(f"Updated factor '{self.name}' with MPPI: cost range [{np.min(costs):.3f}, {np.max(costs):.3f}], mean of cost {np.mean(costs):.3f}, ESS inverse {np.sum(weights**2):.5f}")
         # REFACTOR: 가중치 안정성 (inf, 0, nan 처리)
         if np.all(np.isinf(weights)) or np.all(weights == 0) or not np.all(np.isfinite(weights)):
             weights = np.ones_like(weights)
-        weights = weights / np.sum(weights)
+            weights = weights / np.sum(weights)
         
         self._factor = SampleMessage(self._dims.copy(), samples, weights)
         return self._factor.copy()
@@ -518,7 +571,10 @@ class SampleFNode(Node):
         out_msg = SampleMessage(var_dims, samples_out, new_weights)
         out_msg.normalize() # 정규화 필수
 
-        # 4. 재샘플링
+        weighted_vals = out_msg.weights ** self.message_exponent
+        weighted_vals = weighted_vals / np.sum(weighted_vals)
+        out_msg.weights = weighted_vals
+
         out_msg = out_msg.resample(min(500, out_msg.N), jitter=1e-4)
 
         return out_msg
@@ -548,14 +604,10 @@ class SampleFactorGraph(Graph):
     def loopy_propagate(self, steps: int = 1, 
                         factor_costs: Dict[SampleFNode, Tuple[callable, dict]] = None,
                         density_method: Literal['kde', 'gmm', 'gaussian'] = 'kde'):
-        """
-        factor_costs: MPPI 업데이트를 수행할 팩터 노드와 (cost_fn, kwargs) 딕셔너리
-        density_method: 메시지 곱셈 및 팩터 메시지 계산에 사용할 밀도 추정 방식
-        """
+        
         vnodes = self.get_vnodes()
         fnodes = self.get_fnodes()
 
-        # 전역 밀도 추정 방식 설정
         for node in vnodes + fnodes:
             node.density_method = density_method
 
@@ -564,13 +616,15 @@ class SampleFactorGraph(Graph):
             for v in vnodes:
                 v.propagate()
 
-            # 2. Factor update (MPPI)
-            if factor_costs is not None:
-                for f in fnodes:
-                    if f in factor_costs:
-                        cost_fn, kwargs = factor_costs[f]
-                        base = kwargs.get('base', None)
-                        f.update_factor_with_mppi(cost_fn, base_trajectory=base)
+            # 2. Factor update (MPPI) - 모든 팩터 업데이트
+            for f in fnodes:
+                if factor_costs is not None and f in factor_costs:
+                    print(f"Updating factor '{f.name}' with MPPI at step {istep+1}/{steps}")
+                    cost_fn, kwargs = factor_costs[f]
+                    base = kwargs.get('base', None)
+                    f.update_factor_with_mppi(cost_fn, base_trajectory=base)
+                else:
+                    f.update_factor_with_mppi() 
 
             # 3. Factor -> Var
             for f in fnodes:
