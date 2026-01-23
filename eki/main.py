@@ -55,7 +55,7 @@ def main():
 
     # 동적 요소 초기화
     # - 파티클 구름 (연한 파란 점들)
-    particles_plot = ax.scatter([], [], s=1, c='blue', alpha=0.3, label='Particle Belief')
+    particles_plot = ax.scatter([], [], s=1, c='red', alpha=0.3, label='Particle Belief')
     # - 로봇 현재 위치 (평균값)
     robot_plot, = ax.plot([], [], 'ko', markersize=8, label='Robot (Mean)')
     # - 전체 궤적 선
@@ -87,7 +87,7 @@ def main():
         return particles_plot, robot_plot, traj_line
 
     # 애니메이션 실행
-    ani = FuncAnimation(fig, update, frames=config.horizon, interval=100, blit=True)
+    ani = FuncAnimation(fig, update, frames=config.horizon, interval=50, blit=True)
     
     plt.show()
 

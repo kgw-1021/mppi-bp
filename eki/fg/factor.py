@@ -75,3 +75,20 @@ class DynamicsFactor(BinaryFactor):
         # 오차: 실제 x_curr와 예측된 상태의 차이
         # 이 값이 0이어야 물리적으로 타당함
         return (x_curr - pred_state) * self.weight
+    
+class InterRobotFactor(BinaryFactor):
+    """두 로봇(x_a, x_b) 사이의 충돌 방지 팩터"""
+    def __init__(self, min_dist, weight=20.0):
+        super().__init__(weight)
+        self.min_dist = min_dist # 로봇 A 반지름 + 로봇 B 반지름 + 안전거리
+
+    def error(self, x_a, x_b):
+        # x_a, x_b shape: (StateDim,)
+        pos_a = x_a[:2]
+        pos_b = x_b[:2]
+        
+        dist = jnp.linalg.norm(pos_a - pos_b)
+        
+        # 거리가 min_dist보다 가까우면 페널티 부여
+        # EKI는 Error=0을 지향하므로 침범한 만큼을 에러로 반환
+        return jnp.maximum(0.0, self.min_dist - dist) * self.weight
