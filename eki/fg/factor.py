@@ -24,15 +24,16 @@ class BinaryFactor(Factor):
 
 class ObstacleFactor(UnaryFactor):
     """장애물 회피 팩터 (SDF 기반)"""
-    def __init__(self, center, radius, weight=10.0):
+    def __init__(self, center, radius, safe_margin=0.5, weight=10.0):
         super().__init__(weight)
         self.center = jnp.array(center)
         self.radius = radius
+        self.safe_margin = safe_margin
 
     def error(self, x_t):
         # x_t shape: (StateDim,)
         pos = x_t[:2]
-        dist = jnp.linalg.norm(pos - self.center)
+        dist = jnp.linalg.norm(pos - self.center) - self.safe_margin
         # 장애물 안쪽이면 페널티 (양수), 바깥이면 0
         # EKI는 Error=0을 목표로 하므로, 침범 깊이를 에러로 반환
         return jnp.maximum(0.0, self.radius - dist) * self.weight
