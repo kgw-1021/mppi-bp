@@ -15,7 +15,7 @@ class SampleFNode(Node):
     def update_factor_with_mppi(self, cost_fn: Callable[[np.ndarray], np.ndarray], 
                                 lambda_val: float = 1.0, 
                                 num_samples: int = 100, 
-                                exploration_sigma: float = 0.5):
+                                exploration_sigma: float = 10.0):
         """
         MPPI를 수행하여 연결된 변수들에게 보낼 메시지(Mean, Cov)를 생성
         """

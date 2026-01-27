@@ -7,7 +7,7 @@ from motion.agent import SampleAgent
 def run_simulation():
     # 1. 맵 설정
     omap = ObstacleMap()
-    omap.add_circle(0.0, 0.0, 10.0) # 중앙에 큰 장애물
+    omap.add_circle(0.0, 0.0, 2.0) # 중앙에 큰 장애물
     
     # 2. 로봇 생성 (서로 마주보는 위치)
     # Robot A: (-5, -2) -> (5, 2)
@@ -35,22 +35,22 @@ def run_simulation():
             agent_a.set_neighbor_belief(0, h, mu_b, cov_b)
         
         # (B) 계획 수립 (Optimize)
-        next_pos_a = agent_a.step(iterations=100)
-        next_pos_b = agent_b.step(iterations=100)
+        next_pos_a = agent_a.step(iterations=10)
+        next_pos_b = agent_b.step(iterations=10)
         
         # (C) 이동 (Shift Trajectory simulates movement)
         # 실제로는 물리 엔진이 있어야 하지만, 계획된 첫 위치로 이동했다고 가정
         history_a.append(next_pos_a)
         history_b.append(next_pos_b)
         
-        agent_a.shift_trajectory(next_pos_a)
-        agent_b.shift_trajectory(next_pos_b)
+        agent_a.shift_trajectory()
+        agent_b.shift_trajectory()
 
         # (D) 시각화
         ax.clear()
         
         # 장애물 그리기
-        circle = plt.Circle((0, 0), 10.0, color='k', alpha=0.5)
+        circle = plt.Circle((0, 0), 2.0, color='k', alpha=0.5)
         ax.add_patch(circle)
         
         # 궤적 그리기 (Particles)

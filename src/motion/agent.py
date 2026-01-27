@@ -2,57 +2,76 @@
 import numpy as np
 from fg.graph import Graph
 from fg.factor_graph_mppi import SampleVNode
-from .nodes import GoalSampleFNode, ObstacleSampleFNode, DistSampleFNode, PriorFactor
+from .nodes import GoalSampleFNode, ObstacleSampleFNode, DistSampleFNode, KinematicsFNode
 
 class SampleAgent:
-    def __init__(self, name: str, start_pos, goal_pos, omap, horizon=5):
+    def __init__(self, name: str, start_pos, goal_pos, omap, horizon=10):
         self.name = name
         self.horizon = horizon
-        self.dims = [2] # x, y
+        # [수정 1] 상태 차원을 4로 변경 (x, y, vx, vy)
+        self.dims = [4] 
         
         self.graph = Graph()
         self.vars: list[SampleVNode] = []
         self.dist_factors: list[DistSampleFNode] = []
         
+        # 4차원 목표 상태 생성 (위치는 goal_pos, 속도는 0)
+        # goal_pos가 (2,)라고 가정
+        full_goal_state = np.zeros(4)
+        full_goal_state[:2] = goal_pos
+        
         # 1. 궤적 변수 생성 (x0 ... xH)
         for i in range(horizon):
             v = SampleVNode(f"{name}_v{i}", self.dims, num_particles=100)
-            
-            # 초기화: 시작에서 목표까지 선형 보간 + 노이즈
-            alpha = i / (horizon - 1)
-            init_pos = start_pos * (1-alpha) + goal_pos * alpha
-            v.particles += init_pos # Shift particles
+            v.particles[:, :2] += start_pos  # 초기 위치 설정 (속도는 0으로 시작)
             
             self.vars.append(v)
             
             # 2. 팩터 연결
             
-            # (A) Obstacle Factor
-            of = ObstacleSampleFNode(f"{name}_obs{i}", self.dims, omap, strength=2.0)
+            # (A) Obstacle Factor (장애물)
+            # Obstacle node 내부에서 samples[:, :2]만 쓰므로 그대로 둬도 됨
+            of = ObstacleSampleFNode(f"{name}_obs{i}", self.dims, omap, strength=20.0)
             self.graph.connect(v, of)
             
-            # (B) Goal Factor (마지막 노드에 강하게, 중간은 약하게 유도)
-            str_val = 5.0 if i == horizon - 1 else 0.1
-            gf = GoalSampleFNode(f"{name}_goal{i}", self.dims, goal_pos, strength=str_val)
+            # (B) Goal Factor (목표)
+            # 마지막 노드에 강하게, 나머지는 약하게
+            str_val = 1.0 if i == horizon - 1 else 0.1
+            
+            # [수정 3] GoalFactor에 4차원 목표 전달
+            gf = GoalSampleFNode(f"{name}_goal{i}", self.dims, full_goal_state, strength=str_val)
             self.graph.connect(v, gf)
             
-            # (C) Distributed Factor (다른 로봇 회피용)
+            # (C) Distributed Factor (충돌 방지)
             df = DistSampleFNode(f"{name}_dist{i}", self.dims, min_dist=1.5, strength=5.0)
             self.graph.connect(v, df)
             self.dist_factors.append(df)
             
-            # (D) Smoothness / Prior Factor (t와 t-1 연결)
-            # 여기서는 간단히 코드상에서 처리하거나, explicit factor로 추가 가능
-            # 루프 내에서 처리하는 방식 사용 (아래 step 함수 참조)
+        # [수정 4] Dynamics Factor (Kinematics) 추가
+        # x_t 와 x_{t+1} 을 연결
+        for i in range(horizon - 1):
+            curr_node = self.vars[i]
+            next_node = self.vars[i+1]
+            
+            # Dynamics Factor 생성 (dt=0.1)
+            dyn = KinematicsFNode(f"{name}_dyn_{i}", self.dims, dt=0.1, strength=5.0)
+            
+            # 순서대로 연결 (Graph Connect 순서가 중요할 수 있음)
+            # KinematicsFNode 내부에서 edges[0]을 prev, edges[1]을 next로 가정했거나 이름순 정렬함
+            self.graph.connect(curr_node, dyn)
+            self.graph.connect(next_node, dyn)
 
     def set_neighbor_belief(self, neighbor_idx, timestep, mean, cov):
         if timestep < self.horizon:
+            # DistFactor는 위치(2D)만 볼 수도 있고 4D를 볼 수도 있음.
+            # DistSampleFNode 구현에 따라 다르지만, 보통 위치만 필요함.
+            # 받은 mean이 4차원이면 그대로 넣어도 DistNode 내부에서 [:2]만 쓰면 됨.
             self.dist_factors[timestep].set_remote_belief(mean, cov)
 
-    def step(self, iterations=20):
+    def step(self, iterations=5):
         """ 한 번의 제어 주기 동안의 최적화 """
         
-        # EKI Iterations (Internal Loop)
+        # EKI Iterations
         for _ in range(iterations):
             # 1. Update Factors (MPPI Exploration)
             for node in self.graph.nodes:
@@ -60,24 +79,26 @@ class SampleAgent:
                     node.update_factor()
             
             # 2. Update Variables (EKI Transport)
-            for i, v in enumerate(self.vars):
-                # Smoothness Constraint (수동 주입)
-                # 이전 노드의 평균 위치를 'Prior' 메시지처럼 흉내내서 보낼 수 있음
-                # 여기서는 생략하고 자체 Factor Graph 로직에 맡김
-                v.propagate(step_size=0.8)
+            for v in self.vars:
+                v.propagate(step_size=1.0)
 
         # Return next intended position (First step of trajectory)
         action_mean, _ = self.vars[0].get_belief_stats()
         
-        # Receding Horizon Implementation
-        # 실제 이동 후, 변수들을 shift 해주는 로직이 필요하지만
-        # 시뮬레이션 단순화를 위해 첫 번째 변수 위치를 반환
-        return action_mean
+        # 다음 스텝을 위해 궤적 Shift (MPC)
+        self.shift_trajectory()
+        
+        return action_mean[:2] # 위치만 반환
 
-    def shift_trajectory(self, current_pos):
+    def shift_trajectory(self):
         """ MPC 처럼 한 칸씩 당기기 """
         for i in range(self.horizon - 1):
             self.vars[i].particles = self.vars[i+1].particles.copy()
         
-        # 마지막은 그대로 유지하거나 목표 주변으로 재샘플링
-        self.vars[-1].particles = self.vars[-1].particles + np.random.randn(*self.vars[-1].particles.shape) * 0.1
+        # 마지막 노드는 이전 노드(이제 마지막이 된)에서 운동학적 전파 혹은 랜덤
+        # 간단히 마지막 상태 유지 + 노이즈
+        last_node = self.vars[-1]
+        noise = np.random.randn(*last_node.particles.shape) * 0.1
+        last_node.particles += noise
+        # 속도 감쇠 (안정성을 위해)
+        last_node.particles[:, 2:] *= 0.9
