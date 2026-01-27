@@ -1,59 +1,84 @@
+import jax
 import jax.numpy as jnp
-from .factor import UnaryFactor, BinaryFactor
+from .factor import UnaryFactor, BinaryFactor, InterRobotFactor
 
 class FactorGraph:
     def __init__(self, dt):
         self.dt = dt
-        # 타임스텝에 상관없이 공통적으로 적용되는 팩터들 (예: 모든 구간에 장애물 존재)
-        self.unary_factors = [] 
-        self.binary_factors = [] # 주로 Dynamics
-        
-    def add_factor(self, factor):
-        if isinstance(factor, UnaryFactor):
-            self.unary_factors.append(factor)
-        elif isinstance(factor, BinaryFactor):
-            self.binary_factors.append(factor)
-        else:
-            raise ValueError("Unknown factor type")
+        self.factors = [] 
 
-    def evaluate_node_error(self, x_curr, x_prev, x_next, is_start=False, is_end=False):
+    def add_factor(self, factor):
+        """팩터 추가"""
+        self.factors.append(factor)
+
+    def remove_factor(self, factor):
+        """팩터 제거 (특정 조건 만족 시)"""
+        if factor in self.factors:
+            self.factors.remove(factor)
+
+    def clear_factors_of_type(self, factor_type):
+        """특정 타입의 팩터 일괄 제거 (예: 모든 장애물 제거)"""
+        self.factors = [f for f in self.factors if not isinstance(f, factor_type)]
+
+    def evaluate_node_error(self, x_curr, x_prev, x_next, **kwargs):
         """
-        단일 노드(x_curr) 입장에서의 모든 에러를 합산하여 벡터로 반환.
-        Solver의 'obs_fn' 역할을 수행함.
+        x_curr: 현재 노드 상태
+        kwargs: 'global_msgs', 'agent_idx', 'priorities' 등 포함
         """
         errors = []
+        
+        # 컨텍스트 추출
+        global_msgs = kwargs.get('global_msgs') # (M, D)
+        my_idx = kwargs.get('agent_idx')
+        
+        for factor in self.factors:
+            
+            # [Case A] 로봇 간 충돌 팩터 (InterRobotFactor)
+            if isinstance(factor, InterRobotFactor):
+                if global_msgs is None or my_idx is None:
+                    continue # 정보 없으면 패스
 
-        # 1. Unary Factors (장애물, 속도제한 등)
-        for factor in self.unary_factors:
-            # 특수 로직: GoalFactor는 보통 마지막 노드에만 적용할 수도 있음
-            # 여기서는 편의상 모든 노드에 적용하되 가중치로 조절 가능하다고 가정
-            # 혹은 Factor 내부에 적용 시간(idx) 로직을 넣을 수도 있음
-            err = factor.error(x_curr)
-            # 스칼라 에러를 1차원 배열로 변환하여 추가
-            errors.append(jnp.atleast_1d(err))
+                # 다른 모든 에이전트에 대해 BinaryFactor 계산
+                # vmap을 사용하여 효율적으로 계산 (One-to-Many)
+                
+                def compute_pair_error(other_state, other_idx):
+                    # 자기 자신과의 충돌은 계산하지 않음 (Error = 0)
+                    is_me = (other_idx == my_idx)
+                    
+                    # BinaryFactor 호출 (dt는 무시됨)
+                    # 필요한 정보(인덱스 등)를 kwargs로 전달
+                    err = factor.error(
+                        x_curr, 
+                        other_state, 
+                        dt=self.dt, 
+                        my_idx=my_idx, 
+                        other_idx=other_idx, 
+                        **kwargs
+                    )
+                    
+                    return err * (1.0 - is_me) # 내가 아니면 에러 반영
 
-        # 2. Forward Dynamics (x_prev -> x_curr)
-        # 시작 노드(is_start)는 이전 노드가 없으므로 계산 제외 (혹은 0)
-        if not is_start:
-            for factor in self.binary_factors:
+                # 모든 에이전트 인덱스 생성
+                all_indices = jnp.arange(global_msgs.shape[0])
+                
+                # vmap으로 일괄 계산 후 합산 (Sum of constraints)
+                # 이것이 곧 Sigma(BinaryFactors)가 됨
+                pair_errors = jax.vmap(compute_pair_error)(global_msgs, all_indices)
+                total_collision_error = jnp.sum(pair_errors)
+                
+                errors.append(jnp.atleast_1d(total_collision_error))
+
+            # [Case B] 일반적인 동역학 팩터 (Dynamics - Temporal Binary)
+            elif isinstance(factor, BinaryFactor):
+                # x_prev와 x_curr 연결
                 err = factor.error(x_prev, x_curr, self.dt)
                 errors.append(jnp.atleast_1d(err))
-        else:
-            # 차원 맞추기용 0 채우기 (State Dim만큼)
-            # 실제로는 Solver 레벨에서 Boundary 처리를 하므로 여기는 dummy
-            pass 
-
-        # 3. Backward Dynamics (x_curr -> x_next)
-        # 마지막 노드(is_end)는 다음 노드가 없으므로 제외
-        if not is_end:
-            for factor in self.binary_factors:
-                # 주의: BinaryFactor.error(from, to)
-                err = factor.error(x_curr, x_next, self.dt)
+                
+            # [Case C] 단항 팩터 (Unary - Obstacle, Goal)
+            elif isinstance(factor, UnaryFactor):
+                err = factor.error(x_curr)
                 errors.append(jnp.atleast_1d(err))
-        
-        # 모든 에러를 하나의 긴 벡터로 연결 (Concatenate)
-        # JAX vmap 호환성을 위해 리스트 언패킹 사용
+                
         if not errors:
             return jnp.zeros(1)
-            
         return jnp.concatenate(errors)

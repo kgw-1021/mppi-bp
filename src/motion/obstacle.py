@@ -1,82 +1,55 @@
+# obstacle.py
 import numpy as np
-from typing import Tuple, List, Dict
 
 class ObstacleMap:
-    def __init__(self) -> None:
-        self.objects = {}
-        # 객체가 추가될 때마다 JAX/GPU가 처리하기 쉬운 형태로 캐싱
-        self._cache_obstacles()
+    def __init__(self):
+        self.circles = [] # (x, y, r)
 
-    def set_circle(self, name: str, centerx, centery, radius):
-        o = {'type': 'circle', 'name': name, 'centerx': centerx, 'centery': centery, 'radius': radius}
-        self.objects[name] = o
-        self._cache_obstacles() # 장애물이 변경될 때마다 캐시 업데이트
+    def add_circle(self, x, y, r):
+        self.circles.append(np.array([x, y, r]))
 
-    def _cache_obstacles(self):
-        """장애물 데이터를 NumPy 배열로 변환 (JAX/GPU 연산에 최적화)"""
-        self._circles = []
-        for o in self.objects.values():
-            if o['type'] == 'circle':
-                self._circles.append([o['centerx'], o['centery'], o['radius']])
-        
-        if self._circles:
-            # (M, 3) 배열. M은 원형 장애물 수
-            self._circle_params = np.array(self._circles)
-        else:
-            self._circle_params = np.empty((0, 3))
-
-    def get_obstacle_cost(self, samples: np.ndarray, safe_dist: float) -> np.ndarray:
+    def get_obstacle_cost(self, samples: np.ndarray, safe_dist: float = 0.5) -> np.ndarray:
         """
-        [VECTORIZED - NO GRADIENT] 장애물 cost function for MPPI.
-        samples: (K, 4) array [x, y, vx, vy]
-        Returns: (K,) cost values
+        samples: (N, D) - only uses x, y (first 2 dims)
+        returns: (N,) cost
         """
-        if self._circle_params.shape[0] == 0:
+        if not self.circles:
             return np.zeros(samples.shape[0])
 
-        # (K, 2) 샘플 위치
-        samples_xy = samples[:, :2]
+        total_cost = np.zeros(samples.shape[0])
         
-        # (M, 2) 장애물 중심
-        centers = self._circle_params[:, :2]
-        # (M,) 장애물 반지름
-        radii = self._circle_params[:, 2]
-
-        # NumPy 브로드캐스팅을 사용한 벡터화 연산
-        # (K, 1, 2) - (1, M, 2) => (K, M, 2)
-        diffs = samples_xy[:, np.newaxis, :] - centers[np.newaxis, :, :]
+        # Vectorized calculation for all circles
+        # Obstacles: (M, 3), Samples: (N, 2)
+        # Distance matrix: (N, M)
         
-        # (K, M) - 각 샘플과 각 장애물 중심 간의 거리 (L2 norm)
-        # np.linalg.norm(diffs, axis=2) 대신 수동 계산 (JAX/Numba에서 더 빠를 수 있음)
-        mags = np.sqrt(np.sum(diffs**2, axis=2)) + 1e-8
+        obs_array = np.array(self.circles)
+        centers = obs_array[:, :2]
+        radii = obs_array[:, 2]
         
-        # (K, M) - 각 샘플과 각 장애물 표면 간의 SDF
-        distances = mags - radii[np.newaxis, :]
+        # Broadcasting: (N, 1, 2) - (1, M, 2)
+        diff = samples[:, np.newaxis, :2] - centers[np.newaxis, :, :]
+        dists = np.linalg.norm(diff, axis=2) # (N, M)
         
-        # (K,) - 각 샘플에 대해 *가장 가까운* 장애물과의 거리
-        # (axis=1은 M개 장애물에 대한 축)
-        min_distances = np.min(distances, axis=1)
+        # Signed Distance: dist - radius
+        sdf = dists - radii[np.newaxis, :]
         
-        # 벡터화된 비용 계산
-
-        costs = np.zeros_like(min_distances)
+        # Cost Logic:
+        # 1. Collision (sdf < 0): High Cost
+        # 2. Warning (0 < sdf < safe_dist): Exponential Cost
+        # 3. Safe (sdf > safe_dist): 0 Cost
         
-        # 1. Hard constraint: 충돌
-        collision = min_distances < 0
-        costs[collision] = 1e5
-
-        # 2. Soft constraint: safe zone 내부 (강한 회피 신호)
-        inside_safe = (min_distances >= 0) & (min_distances < safe_dist)
-        # 기존 로직 유지
-        costs[inside_safe] = ((safe_dist - min_distances[inside_safe]) / safe_dist) * 100
+        # Collision Mask
+        collision_mask = sdf < 0.0
+        total_cost += np.sum(collision_mask * 1000.0, axis=1) # Hard collision
         
-        # 3. [추가] Long-tail constraint: safe zone 밖 (약한 회피 신호)
-        # safe_dist보다 멀어도, 장애물에 가까운 것보다 먼 것이 '아주 조금' 더 좋다는 신호
-        outside_safe = min_distances >= safe_dist
-        # 거리가 멀수록 0에 수렴하는 작은 값 (예: 1/거리)
-        # 100.0 은 weight 조절용, 1.0은 0나누기 방지
-        costs[outside_safe] = 1.0 / (min_distances[outside_safe] + 1) 
-
-        # print("Obstacle costs:", costs)
+        # Soft Constraint
+        # exp(-alpha * dist)
+        safe_mask = (sdf >= 0.0) & (sdf < safe_dist)
+        soft_costs = np.exp(-2.0 * sdf) 
+        # Apply mask
+        soft_costs[~safe_mask] = 0.0
+        soft_costs[collision_mask] = 0.0 # Already handled
         
-        return costs
+        total_cost += np.sum(soft_costs, axis=1) * 10.0
+        
+        return total_cost

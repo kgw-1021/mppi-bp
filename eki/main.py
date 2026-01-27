@@ -2,93 +2,114 @@ import jax.numpy as jnp
 import jax
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-from fg.factor import ObstacleFactor, GoalFactor, DynamicsFactor, SpeedLimitFactor
+import time
+
+from fg.agent import Agent
+from fg.factor import ObstacleFactor, DynamicsFactor, SpeedLimitFactor, AgentGoalFactor
 from fg.graph import FactorGraph
-from fg.solver import FactorGraphEKISolver
-import time 
+from fg.solver import MultiAgentEKISolver
 
 class Config:
-    horizon = 30
+    horizon = 50
     num_particles = 500
     state_dim = 4
     dt = 0.1
     r_diag = 0.5
-    damping = 0.2
+    damping = 0.5
 
 def main():
-    # 1. 그래프 및 팩터 설정
+    # 1. 에이전트 객체 생성 (단독)
+    # 시작점, 목표점, 반지름, 색상 등을 여기서 정의
+    single_agent = Agent(
+        id=0,
+        start_pose=[0.0, 0.0, 0.0, 0.0],
+        goal_pose=[10.0, 10.0, 0.0, 0.0],
+        radius=0.5,
+        color='blue',
+        priority=0.0
+    )
+
+    # 2. 그래프 및 팩터 설정
     graph = FactorGraph(dt=0.1)
-    graph.add_factor(DynamicsFactor(weight=30.0)) # 물리 법칙 강하게
+    
+    # 물리 법칙
+    graph.add_factor(DynamicsFactor(pos_weight=30.0, vel_weight=10.0))
+    
+    # 장애물 (환경 요소)
     graph.add_factor(ObstacleFactor(center=[5.0, 5.0], radius=2.0, weight=15.0))
     graph.add_factor(ObstacleFactor(center=[10.0, 8.0], radius=1.5, weight=15.0))
     
-    goal_pos = jnp.array([10.0, 10.0, 0.0, 0.0])
-    graph.add_factor(GoalFactor(goal_state=goal_pos, weight=2.0))
+    # 목표 도달
+    graph.add_factor(AgentGoalFactor(weight=5.0))
     
-    # 속도 제한을 현실적으로 수정 (예: 5.0 m/s)
+    # 속도 제한
     graph.add_factor(SpeedLimitFactor(max_speed=5.0, weight=1.0))
 
     config = Config()
-    solver = FactorGraphEKISolver(graph, config)
     
-    # 2. 팩터 그래프 최적화 (Solving)
-    start_pos = jnp.array([0.0, 0.0, 0.0, 0.0])
+    # [변경 3] 솔버 교체 (MultiAgentEKISolver 재사용)
+    solver = MultiAgentEKISolver(graph, config)
+    
+    # 3. 팩터 그래프 최적화 (Solving)
     key = jax.random.PRNGKey(42)
-    
     print("Optimization Start...")
-    # final_belief shape: (T, N, D)
+    
     start_time = time.time()
-    final_belief = solver.solve(key, start_pos, goal_pos, iterations=50)
+    
+    # [변경 4] solve 함수에 '리스트' 형태로 전달
+    # 결과 shape: (M, T, N, D) -> 여기선 M=1
+    final_belief_all = solver.solve(key, [single_agent], iterations=100)
+    
     end_time = time.time()
     print(f"Optimization Time: {end_time - start_time:.4f} s")
-    print("Optimization Finished.")
+    
+    # 단일 에이전트이므로 0번째 인덱스 추출
+    # final_belief shape: (T, N, D)
+    final_belief = final_belief_all[0] 
 
-
-    # 3. 애니메이션 설정
+    # 4. 애니메이션 설정
     fig, ax = plt.subplots(figsize=(8, 8))
     
-    # 고정 요소 그리기 (목표, 장애물)
-    ax.add_patch(plt.Circle((5, 5), 2.0, color='r', alpha=0.2))
-    ax.add_patch(plt.Circle((10, 8), 1.5, color='r', alpha=0.2))
-    ax.plot(start_pos[0], start_pos[1], 'go', markersize=10, label='Start')
-    ax.plot(goal_pos[0], goal_pos[1], 'rx', markersize=10, label='Goal')
+    # 정적 요소 (장애물)
+    ax.add_patch(plt.Circle((5, 5), 2.0, color='gray', alpha=0.3, label='Obstacle'))
+    ax.add_patch(plt.Circle((10, 8), 1.5, color='gray', alpha=0.3))
+    
+    # 시작/목표 (Agent 속성 활용)
+    ax.plot(single_agent.start_pose[0], single_agent.start_pose[1], 'go', markersize=10, label='Start')
+    ax.plot(single_agent.goal_pose[0], single_agent.goal_pose[1], 'rx', markersize=10, label='Goal')
 
     # 동적 요소 초기화
-    # - 파티클 구름 (연한 파란 점들)
     particles_plot = ax.scatter([], [], s=1, c='red', alpha=0.3, label='Particle Belief')
-    # - 로봇 현재 위치 (평균값)
-    robot_plot, = ax.plot([], [], 'ko', markersize=8, label='Robot (Mean)')
-    # - 전체 궤적 선
     traj_line, = ax.plot([], [], 'b--', alpha=0.5, label='Planned Path')
     
+    # [변경 5] 로봇을 점이 아닌 실제 크기(반지름)를 가진 원으로 표시
+    robot_body = plt.Circle((0, 0), single_agent.radius, color=single_agent.color, alpha=0.8, label='Robot')
+    ax.add_patch(robot_body)
+
     ax.set_xlim(-1, 12)
     ax.set_ylim(-1, 12)
     ax.legend(loc='upper left')
-    ax.grid(True)
+    ax.grid(True, linestyle='--')
+    ax.set_title("Single Agent EKI (Object Oriented)")
 
     # 평균 궤적 계산
-    mean_traj = jnp.mean(final_belief, axis=1)
-
-    print ("Final Mean Trajectory:")
-    print (mean_traj)
+    mean_traj = jnp.mean(final_belief, axis=1) # (T, D)
 
     def update(frame):
-        # 1. 현재 타임스텝의 파티클들 업데이트
-        current_particles = final_belief[frame] # (N, D)
+        # 1. 파티클 업데이트
+        current_particles = final_belief[frame] 
         particles_plot.set_offsets(current_particles[:, :2])
         
-        # 2. 로봇 현재 위치 (평균) 업데이트
-        robot_plot.set_data([mean_traj[frame, 0]], [mean_traj[frame, 1]])
+        # 2. 로봇 몸체 이동 (Circle center 업데이트)
+        pos = mean_traj[frame]
+        robot_body.center = (pos[0], pos[1])
         
-        # 3. 지금까지 지나온 궤적 표시
+        # 3. 궤적 선 업데이트
         traj_line.set_data(mean_traj[:frame+1, 0], mean_traj[:frame+1, 1])
         
-        ax.set_title(f"Time Step: {frame} (t={frame*config.dt:.1f}s)")
-        return particles_plot, robot_plot, traj_line
+        return particles_plot, robot_body, traj_line
 
-    # 애니메이션 실행
     ani = FuncAnimation(fig, update, frames=config.horizon, interval=50, blit=True)
-    
     plt.show()
 
 if __name__ == "__main__":
