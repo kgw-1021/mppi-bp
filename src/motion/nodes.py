@@ -34,7 +34,7 @@ class ObstacleSampleFNode(SampleFNode):
         return self.omap.get_obstacle_cost(samples, safe_dist=1.0, dt=self.dt)
 
     def update_factor(self):
-        self.update_factor_with_mppi(self._cost_fn, lambda_val=0.1, exploration_sigma=10.0)
+        self.update_factor_with_mppi(self._cost_fn, lambda_val=0.01, exploration_sigma=0.1)
 
 class DistSampleFNode(SampleFNode):
     """ 멀티 로봇 간 충돌 방지 """
@@ -59,7 +59,7 @@ class DistSampleFNode(SampleFNode):
         
         # 충돌 시 매우 큰 비용
         collision = dist < self.min_dist
-        costs[collision] = 500.0
+        costs[collision] = 1000.0
         
         # 근접 시 소프트 비용
         near_mask = (dist >= self.min_dist) & (dist < self.min_dist * 2.0)
@@ -69,7 +69,7 @@ class DistSampleFNode(SampleFNode):
 
     def update_factor(self):
         if self.remote_belief is not None:
-            self.update_factor_with_mppi(self._cost_fn, lambda_val=0.2, exploration_sigma=5.0)
+            self.update_factor_with_mppi(self._cost_fn, lambda_val=0.01, exploration_sigma=0.1)
 
 class PriorFactor(SampleFNode):
     """ 이전 스텝과의 연결성을 유지 (Smoothness / Dynamics) """

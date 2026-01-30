@@ -1,6 +1,7 @@
 # main.py
 import numpy as np
 import matplotlib.pyplot as plt
+from motion.nodes import ObstacleSampleFNode
 from motion.obstacle import ObstacleMap
 from motion.agent import SampleAgent
 
@@ -24,7 +25,6 @@ def run_simulation():
 
     # 3. 시뮬레이션 루프
     for t in range(50):
-        print(f"Time Step: {t}")
         
         # (A) 통신: 서로의 계획 공유
         for h in range(agent_a.horizon):
@@ -72,11 +72,24 @@ def run_simulation():
             ax.plot(ha[:,0], ha[:,1], 'r--', alpha=0.5)
             ax.plot(hb[:,0], hb[:,1], 'b--', alpha=0.5)
 
+        for f in agent_a.graph.nodes:
+            if isinstance(f, ObstacleSampleFNode):
+                # 팩터가 변수에게 보낸 메시지 확인
+                target_edge = f.edges[0]
+                if f in target_edge._messages:
+                    msg = target_edge._messages[f]
+                    # 장애물 팩터가 가라고 하는 곳을 'X'로 표시
+                    ax.scatter(msg['mean'][0], msg['mean'][1], marker='x', c='g', s=50, label='Obs Msg')
+
         ax.set_xlim(-20, 20)
         ax.set_ylim(-20, 20)
         ax.legend()
         ax.set_aspect('equal')
         plt.pause(0.1)
+
+        if agent_a.reached_goal() and agent_b.reached_goal():
+            print("Both agents reached their goals!")
+            break
 
     plt.ioff()
     plt.show()

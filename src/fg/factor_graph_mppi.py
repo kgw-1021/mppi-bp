@@ -73,55 +73,64 @@ class SampleVNode(Node):
     def propagate(self, step_size: float = 0.4):
         """
         EKI Update Step
-        step_size: Damping factor (0.0 ~ 1.0) to prevent oscillation
         """
-        incoming_msgs = []
+        # [수정 1] 메시지와 보낸 사람(sender)을 함께 저장할 리스트
+        incoming_data = [] 
+        
+        print(f"\n[DEBUG] Node {self.name} Edges: {len(self.edges)}")
+        
         for edge in self.edges:
             sender = edge.get_other(self)
-            if sender in edge._messages:
-                incoming_msgs.append(edge._messages[sender])
+            has_msg = sender in edge._messages
+            
+            # 여기서 연결 상태와 메시지 존재 여부를 먼저 확인
+            print(f"  - Check Neighbor: {sender.name} (Type: {type(sender).__name__}), Has Msg: {has_msg}")
+            
+            if has_msg:
+                # [수정 2] (보낸사람, 메시지) 튜플로 저장
+                incoming_data.append((sender, edge._messages[sender]))
         
-        if not incoming_msgs:
+        if not incoming_data:
+            print("  -> No incoming messages.")
             return
 
-        # 1. Prior Statistics (현재 입자들의 분포)
+        # 1. Prior Statistics
         prior_mean = np.mean(self.particles, axis=0)
-        # Covariance calculation (D x D)
         diff = self.particles - prior_mean
         prior_cov = (diff.T @ diff) / (self.num_particles - 1) + np.eye(self.dims[0]) * 1e-6
 
         total_displacement = np.zeros_like(self.particles)
         
-        # 2. Calculate Displacement for each message (EKI)
-        for msg in incoming_msgs:
+        # 2. Calculate Displacement for each message
+        # [수정 3] 루프에서 sender를 unpacking 하여 사용
+        for sender, msg in incoming_data:
             target_mean = msg['mean']
-            target_cov = msg['cov'] # R matrix (Factor Uncertainty)
-
-            # Kalman Gain: K = C_xx * (C_xx + R)^-1
+            target_cov = msg['cov'] 
+            
+            # 이제 정확한 sender의 이름이 출력됩니다.
+            trace_val = np.trace(target_cov)
+            print(f"  -> Processing Msg from [{sender.name}]: Uncertainty(Trace)={trace_val:.4f}")
+            
+            # --- EKI Core Logic ---
             innovation_cov = prior_cov + target_cov
             
-            # Solve for K.T: (C_xx + R) * K.T = C_xx
+            # Cholesky나 Solve 사용 시 에러 방지를 위한 안전장치 (Optional)
+            # innovation_cov += np.eye(len(target_mean)) * 1e-6 
+
             K_T = np.linalg.solve(innovation_cov, prior_cov).T 
             
-            # Generate Virtual Observations (y) with perturbation
-            # y ~ N(target_mean, target_cov)
             obs_noise = np.random.multivariate_normal(
                 np.zeros(len(target_mean)), target_cov, self.num_particles
             )
             y_samples = target_mean + obs_noise
             
-            # Analysis Step: x_new = x + K * (y - x)
-            # Implementation: displacement = (y - x) @ K.T
             innovation = y_samples - self.particles
             displacement = innovation @ K_T
             
             total_displacement += displacement
 
-        # 3. Batch Update (Averaging)
-        # 여러 팩터의 힘을 평균내어 진동 방지
-        avg_displacement = total_displacement / len(incoming_msgs)
-        
-        # Apply update with step size
+        # 3. Batch Update
+        avg_displacement = total_displacement / len(incoming_data)
         self.particles = self.particles + step_size * avg_displacement
 
     def get_belief_stats(self):

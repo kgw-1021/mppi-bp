@@ -8,17 +8,19 @@ class SampleAgent:
     def __init__(self, name: str, start_pos, goal_pos, omap, horizon=10):
         self.name = name
         self.horizon = horizon
-        # [수정 1] 상태 차원을 4로 변경 (x, y, vx, vy)
-        self.dims = [4] 
+        self.goal_pos_ = goal_pos
+        self.dims = [4]  # x, y, vx, vy
         
         self.graph = Graph()
         self.vars: list[SampleVNode] = []
         self.dist_factors: list[DistSampleFNode] = []
+
+        
         
         # 4차원 목표 상태 생성 (위치는 goal_pos, 속도는 0)
         # goal_pos가 (2,)라고 가정
         full_goal_state = np.zeros(4)
-        full_goal_state[:2] = goal_pos
+        full_goal_state[:2] = self.goal_pos_
         
         # 1. 궤적 변수 생성 (x0 ... xH)
         for i in range(horizon):
@@ -80,7 +82,7 @@ class SampleAgent:
             
             # 2. Update Variables (EKI Transport)
             for v in self.vars:
-                v.propagate(step_size=1.0)
+                v.propagate(step_size=0.1)
 
         # Return next intended position (First step of trajectory)
         action_mean, _ = self.vars[0].get_belief_stats()
@@ -102,3 +104,9 @@ class SampleAgent:
         last_node.particles += noise
         # 속도 감쇠 (안정성을 위해)
         last_node.particles[:, 2:] *= 0.9
+
+    def reached_goal(self, threshold=0.1):
+        """ 목표 도달 여부 확인 """
+        mean, _ = self.vars[-1].get_belief_stats()
+        dist_to_goal = np.linalg.norm(self.goal_pos_ - mean[:2])
+        return dist_to_goal < threshold
