@@ -131,7 +131,7 @@ num_particles = 1000
 # Setup Solvers
 # Start from 0.0 (Perfectly Ambiguous for GaBP)
 mppi_joint = MPPIEKIJointSolver(num_particles, init_mean=2.0, init_std=2.0)
-gabp = GaBPSolver(init_mean=2.0) # GaBP needs slight bias to move at all
+gabp = GaBPSolver(init_mean=2.0)
 
 for _ in range(iters):
     mppi_joint.step_joint()
