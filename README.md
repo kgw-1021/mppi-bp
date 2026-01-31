@@ -55,15 +55,15 @@ Factors evaluate the particles to generate a "target belief" (message) that sati
 1.  **Cost Evaluation:** Calculate cost $\mathcal{J}^{(k)}$ for each particle (e.g., distance to obstacle).
 2.  **Weighting:** Compute importance weights using the softmax function:
 
-    $$
-    w^{(k)} \propto \exp \left( -\frac{1}{\lambda} \mathcal{J}^{(k)} \right)
-    $$
+$$
+w^{(k)} \propto \exp \left( -\frac{1}{\lambda} \mathcal{J}^{(k)} \right)
+$$
 
 3.  **Message Construction:** Compute the target mean and covariance preferred by this factor:
 
-    $$
-    \mu_{msg} = \sum_{k} w^{(k)} \mathbf{x}_t^{(k)}, \quad \Sigma_{msg} = \sum_{k} w^{(k)} (\mathbf{x}_t^{(k)} - \mu_{msg})(\mathbf{x}_t^{(k)} - \mu_{msg})^\top
-    $$
+$$
+\mu_{msg} = \sum_{k} w^{(k)} \mathbf{x}_t^{(k)}, \quad \Sigma_{msg} = \sum_{k} w^{(k)} (\mathbf{x}_t^{(k)} - \mu_{msg})(\mathbf{x}_t^{(k)} - \mu_{msg})^\top
+$$
 
 #### Step 3: Variable Update via EKI (Particle Transport)
 The variable node aggregates messages from multiple factors and updates its particles. Instead of simply replacing the distribution, we use **Ensemble Kalman Inversion** to *transport* particles toward the optimal posterior:
