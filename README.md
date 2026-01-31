@@ -14,6 +14,8 @@ The core optimization engine utilizes a sampling-based inference method (similar
   <em style="color: gray; font-size: 0.9em;">Agents plan their paths by avoiding major obstacles and negotiating with other agents.</em>
 </div>
 
+---
+
 <div style="text-align: center; margin: 20px 0;">
   <img src="/src\simulation_result_multi_obs.gif" alt="Multi Obs" width="80%" style="border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
   <br>
