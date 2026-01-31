@@ -54,7 +54,7 @@ class SampleAgent:
             
         # 3. Dynamics Factor (Kinematics)
         for i in range(horizon - 1):
-            dyn = KinematicsFNode(f"{self.name}_dyn_{i}", self.dims, dt=0.1, strength=10.0)
+            dyn = KinematicsFNode(f"{self.name}_dyn_{i}", self.dims, dt=0.1, strength=20.0)
             self.graph.connect(self.vars[i], dyn)
             self.graph.connect(self.vars[i+1], dyn)
             self.static_factors.append(dyn) # 리스트에 등록

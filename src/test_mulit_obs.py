@@ -7,7 +7,7 @@ from motion.obstacle import ObstacleMap
 from motion.agent import SampleAgent
 
 MAX_SIM_TIME = 1000
-COMM_RANGE = 10.0 
+COMM_RANGE = 5.0 
 
 def run_simulation():
     graph = Graph()
@@ -33,7 +33,11 @@ def run_simulation():
         SampleAgent(0, graph, np.array([-10.0, -10.0]), np.array([10.0, 10.0]), omap),
         SampleAgent(1, graph, np.array([10.0, -10.0]), np.array([-10.0, 10.0]), omap),
         SampleAgent(2, graph, np.array([10.0, 10.0]), np.array([-10.0, -10.0]), omap),
-        SampleAgent(3, graph, np.array([-10.0, 10.0]), np.array([10.0, -10.0]), omap)
+        SampleAgent(3, graph, np.array([-10.0, 10.0]), np.array([10.0, -10.0]), omap),
+        SampleAgent(4, graph, np.array([-10.0, 0.0]), np.array([10.0, 0.0]), omap),
+        SampleAgent(5, graph, np.array([10.0, 0.0]), np.array([-10.0, 0.0]), omap),
+        SampleAgent(6, graph, np.array([0.0, -10.0]), np.array([0.0, 10.0]), omap),
+        SampleAgent(7, graph, np.array([0.0, 10.0]), np.array([0.0, -10.0]), omap)
     ]
 
     histories = [[] for _ in agents]
@@ -44,7 +48,7 @@ def run_simulation():
     fig, ax = plt.subplots(figsize=(10, 10))
     writer = PillowWriter(fps=10)
 
-    with writer.saving(fig, "simulation_result_multi_obs.gif", 100):
+    with writer.saving(fig, "simulation_result_multi_obs2.gif", 100):
         for t in range(MAX_SIM_TIME):
             # -----------------------------------------------------
             # (A) Dynamic Topology (환경/센서 역할)
@@ -99,7 +103,7 @@ def run_simulation():
             ax.add_patch(circle6)
             ax.add_patch(circle7)
 
-            colors = ['r', 'b', 'g', 'm']
+            colors = ['r', 'b', 'g', 'm', 'c', 'y', 'orange', 'purple']
             for i, agent in enumerate(agents):
                 c = colors[i]
                 if not histories[i]: continue

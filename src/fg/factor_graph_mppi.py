@@ -38,7 +38,7 @@ class SampleFNode(Node):
         costs = cost_fn(perturbed_samples) # (N,)
         
         # 4. 가중치 계산 (Weighting): MPPI의 핵심
-        # Cost가 높은(나쁜) 파티클의 가중치는 0에 수렴 -> 통계에서 배제됨 (목소리 소거)
+        # Cost가 높은(나쁜) 파티클의 가중치는 0에 수렴 -> 통계에서 배제됨 
         min_cost = np.min(costs)
         weights_unnorm = np.exp(-(costs - min_cost) / lambda_val)
         weights = weights_unnorm / (np.sum(weights_unnorm) + 1e-10)
@@ -49,7 +49,6 @@ class SampleFNode(Node):
         
         diff = perturbed_samples - msg_mean
         # Weighted Covariance: 좋은 파티클들이 모여있는 분포의 형상
-        # 가중치가 0인 파티클들은 공분산 계산에도 참여하지 못함
         msg_cov = (diff.T @ (diff * weights[:, None])) / (1.0 - np.sum(weights**2) + 1e-9)
         
         # Factor Strength 적용:
@@ -97,12 +96,7 @@ class SampleVNode(Node):
         # -----------------------------------------------------------
         # Joint Update Logic (Stacking Observations)
         # -----------------------------------------------------------
-        
-        # 예: Factor 1은 "x^2=4", Factor 2는 "x=-2"를 주장
-        # 각각의 메시지는 해당 팩터가 생각하는 '이상적인 x의 분포'
-        
-        # Y_joint: [mu_1, mu_2, ...]^T (Stacked Means)
-        # R_joint: BlockDiag[Cov_1, Cov_2, ...] (Stacked Covariances)
+
         
         Y_list = []
         R_list = []
@@ -144,7 +138,6 @@ class SampleVNode(Node):
         try:
             K = C_xy @ np.linalg.inv(C_yy)
         except np.linalg.LinAlgError:
-            # 수치적 안정성을 위한 예외처리
             K = C_xy @ np.linalg.pinv(C_yy)
 
         # 5. Update (Shift) with Perturbation
