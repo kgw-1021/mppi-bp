@@ -1,6 +1,7 @@
 # nodes.py
 import numpy as np
-from fg.factor_graph_mppi import SampleFNode
+from typing import List
+from fg.factor_graph_mppi import SampleFNode, SampleVNode
 from .obstacle import ObstacleMap
 
 class GoalSampleFNode(SampleFNode):
@@ -37,39 +38,54 @@ class ObstacleSampleFNode(SampleFNode):
         self.update_factor_with_mppi(self._cost_fn, lambda_val=0.01, exploration_sigma=0.1)
 
 class DistSampleFNode(SampleFNode):
-    """ 멀티 로봇 간 충돌 방지 """
-    def __init__(self, name: str, dims: list, min_dist: float = 1.0, strength: float = 10.0):
+    """ 
+    [Dynamic Factor] 멀티 로봇 간 충돌 방지 
+    상대방의 궤적 변수 리스트(target_vars)를 직접 참조합니다.
+    """
+    def __init__(self, name: str, dims: list, 
+                 target_vars: List[SampleVNode], # [변경] Agent 객체 대신 변수 리스트 수신
+                 time_step: int, 
+                 min_dist: float = 1.0, 
+                 strength: float = 10.0):
+        
         super().__init__(name, dims, strength)
+        
+        self.target_vars = target_vars    # 상대방의 변수 노드 리스트 (참조)
+        self.time_step = time_step
         self.min_dist = min_dist
-        self.remote_belief = None # (mean, cov)
-
-    def set_remote_belief(self, mean, cov):
-        self.remote_belief = (mean, cov)
 
     def _cost_fn(self, samples: np.ndarray):
-        if self.remote_belief is None:
+        """
+        내부적으로 호출되는 Cost 함수.
+        """
+        # 1. 상대방 궤적 길이 체크
+        if self.time_step >= len(self.target_vars):
             return np.zeros(samples.shape[0])
+            
+        # 2. 상대방의 해당 Time Step 노드 접근
+        target_node = self.target_vars[self.time_step]
         
-        remote_mean, _ = self.remote_belief
-        # samples: (N, 2)
+        # 3. 위치 정보 조회 (Belief)
+        remote_mean, _ = target_node.get_belief_stats()
+        
+        # 4. 거리 계산 및 비용 적용 (이전과 동일)
         diff = samples[:, :2] - remote_mean[:2]
         dist = np.linalg.norm(diff, axis=1)
         
         costs = np.zeros_like(dist)
         
-        # 충돌 시 매우 큰 비용
+        # Collision (Hard)
         collision = dist < self.min_dist
         costs[collision] = 1000.0
         
-        # 근접 시 소프트 비용
+        # Near (Soft)
         near_mask = (dist >= self.min_dist) & (dist < self.min_dist * 2.0)
         costs[near_mask] = np.exp(-1.0 * (dist[near_mask] - self.min_dist)) * 20.0
         
         return costs
 
     def update_factor(self):
-        if self.remote_belief is not None:
-            self.update_factor_with_mppi(self._cost_fn, lambda_val=0.01, exploration_sigma=0.1)
+        self.update_factor_with_mppi(self._cost_fn, lambda_val=0.01, exploration_sigma=0.5)
 
 class PriorFactor(SampleFNode):
     """ 이전 스텝과의 연결성을 유지 (Smoothness / Dynamics) """

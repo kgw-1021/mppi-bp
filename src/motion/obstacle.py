@@ -1,11 +1,12 @@
 import numpy as np
+from typing import List
 
 class ObstacleMap:
     def __init__(self):
         self.circles = [] # (x, y, r)
 
-    def add_circle(self, x, y, r):
-        self.circles.append(np.array([x, y, r]))
+    def add_circle(self, xyr: List):
+        self.circles.append(np.array(xyr))
 
     def get_obstacle_cost(self, samples: np.ndarray, safe_dist: float = 0.5, dt: float = 0.1) -> np.ndarray:
         """
