@@ -116,7 +116,7 @@ class SampleAgent:
                 dims=[2], 
                 target_vars=other_agent.vars, 
                 time_step=t,
-                min_dist=1.0,
+                min_dist=0.8,
                 strength=20.0
             )
             

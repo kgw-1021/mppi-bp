@@ -7,7 +7,7 @@ from motion.obstacle import ObstacleMap
 from motion.agent import SampleAgent
 
 MAX_SIM_TIME = 1000
-COMM_RANGE = 4.0 
+COMM_RANGE = 8.0 
 
 def run_simulation():
     graph = Graph()
@@ -35,7 +35,7 @@ def run_simulation():
     fig, ax = plt.subplots(figsize=(10, 10))
     writer = PillowWriter(fps=10)
     
-    with writer.saving(fig, "simulation_result_center_obs.gif", 100):
+    with writer.saving(fig, "poster_center_obs.gif", 100):
         for t in range(MAX_SIM_TIME):
             # -----------------------------------------------------
             # (A) Dynamic Topology (환경/센서 역할)
@@ -88,7 +88,7 @@ def run_simulation():
 
                 # 과거 궤적
                 past = np.array(histories[i])
-                ax.plot(past[:, 0], past[:, 1], linestyle='--', color=c, alpha=0.4)
+                ax.plot(past[:, 0], past[:, 1], linestyle='--', linewidth=2, color=c, alpha=1.0)
                 
                 # 충돌 팩터 연결선 (디버깅)
                 for neighbor_id in agent.collision_factors:

@@ -15,7 +15,17 @@ class GoalSampleFNode(SampleFNode):
         msg_mean = self.goal
         # Generate covariance: I * 1e-2 (small uncertainty)
         # Scaled by strength (higher strength = smaller cov)
-        msg_cov = np.eye(len(self.goal)) * (1e-2 / self.factor_strength)
+        base_cov = np.eye(4) 
+        
+        # 위치에 대한 분산 (작음 -> 강한 제약)
+        base_cov[0,0] = 1e-2 / self.factor_strength
+        base_cov[1,1] = 1e-2 / self.factor_strength
+        
+        # 속도에 대한 분산 (큼 -> 약한 제약 -> "속도는 신경 쓰지 말고 일단 와!")
+        base_cov[2,2] = 0.1 
+        base_cov[3,3] = 0.1
+        
+        msg_cov = base_cov
         
         msg = {'mean': msg_mean, 'cov': msg_cov, 'type': 'goal'}
         
@@ -24,7 +34,6 @@ class GoalSampleFNode(SampleFNode):
             edge._messages[self] = msg
 
 class ObstacleSampleFNode(SampleFNode):
-    # 생성자에 dt 추가 (기본값 0.1)
     def __init__(self, name: str, dims: list, omap: ObstacleMap, dt: float = 0.1, strength: float = 5.0):
         super().__init__(name, dims, strength)
         self.omap = omap
@@ -32,7 +41,7 @@ class ObstacleSampleFNode(SampleFNode):
 
     def _cost_fn(self, samples: np.ndarray):
         # dt를 넘겨주어 선분 충돌 검사 수행
-        return self.omap.get_obstacle_cost(samples, safe_dist=1.0, dt=self.dt)
+        return self.omap.get_obstacle_cost(samples, safe_dist=0.8, dt=self.dt)
 
     def update_factor(self):
         self.update_factor_with_mppi(self._cost_fn, lambda_val=0.01, exploration_sigma=0.1)
@@ -87,22 +96,6 @@ class DistSampleFNode(SampleFNode):
     def update_factor(self):
         self.update_factor_with_mppi(self._cost_fn, lambda_val=0.01, exploration_sigma=0.5)
 
-class PriorFactor(SampleFNode):
-    """ 이전 스텝과의 연결성을 유지 (Smoothness / Dynamics) """
-    def __init__(self, name: str, dims: list, prev_mean: np.ndarray, strength: float = 1.0):
-        super().__init__(name, dims, strength)
-        self.prev_mean = prev_mean
-        
-    def update_factor(self):
-        # 단순히 이전 위치 주변에 있어야 한다는 Gaussian 메시지
-        # 실제로는 속도 등을 고려해야 하지만 여기선 단순 위치 연결성
-        msg_mean = self.prev_mean
-        msg_cov = np.eye(len(self.prev_mean)) * (0.1 / self.factor_strength)
-        
-        msg = {'mean': msg_mean, 'cov': msg_cov, 'type': 'prior'}
-        for edge in self.edges:
-            edge._messages[self] = msg
-
 class KinematicsFNode(SampleFNode):
     """
     운동학적 제약(Dynamics Constraint)을 처리하는 팩터.
@@ -139,7 +132,7 @@ class KinematicsFNode(SampleFNode):
         
         # (1) 속도 노이즈 주입 (가속도 불확실성 모델링)
         # 위치에는 직접 노이즈를 주지 않음!
-        acc_noise_sigma = 0.5
+        acc_noise_sigma = 1.0
         dv = np.random.randn(N, 2) * acc_noise_sigma
         
         # (2) 운동학적 적분 (Kinematic Integration)
