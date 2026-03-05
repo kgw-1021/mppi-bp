@@ -2,7 +2,7 @@
 import numpy as np
 from typing import Dict, List
 from fg.graph import Graph
-from fg.factor_graph_ import SampleVNode, SampleFNode
+from fg.factor_graph_mppi import SampleVNode, SampleFNode
 from .nodes import GoalSampleFNode, ObstacleSampleFNode, DistSampleFNode, KinematicsFNode
 
 class SampleAgent:
@@ -33,7 +33,7 @@ class SampleAgent:
         # --- 그래프 구축 ---
         for i in range(horizon):
             # 1. Variable Node
-            v = SampleVNode(f"{self.name}_v{i}", self.dims, num_particles=1000)
+            v = SampleVNode(f"{self.name}_v{i}", self.dims, num_particles=100)
             v.particles[:, :2] += start_pos 
             
             if v not in self.graph.nodes: self.graph.nodes.append(v)
@@ -47,14 +47,14 @@ class SampleAgent:
             self.static_factors.append(of) # 리스트에 등록
             
             # (B) Goal Factor
-            str_val = 5.0 if i == horizon - 1 else 3.0
+            str_val = 2.0 if i == horizon - 1 else 0.1
             gf = GoalSampleFNode(f"{self.name}_goal{i}", self.dims, full_goal_state, strength=str_val)
             self.graph.connect(v, gf)
             self.static_factors.append(gf) # 리스트에 등록
             
         # 3. Dynamics Factor (Kinematics)
         for i in range(horizon - 1):
-            dyn = KinematicsFNode(f"{self.name}_dyn_{i}", self.dims, dt=0.1, strength=30.0)
+            dyn = KinematicsFNode(f"{self.name}_dyn_{i}", self.dims, dt=0.1, strength=20.0)
             self.graph.connect(self.vars[i], dyn)
             self.graph.connect(self.vars[i+1], dyn)
             self.static_factors.append(dyn) # 리스트에 등록
@@ -89,7 +89,7 @@ class SampleAgent:
         current_pos, _ = self.vars[0].get_belief_stats()
         self.shift_trajectory()
         
-        return current_pos
+        return current_pos[:2]
 
     # ---------------------------------------------------------
     # 2. 동적 팩터 관리 메서드 (Main Loop에서 호출)
@@ -117,7 +117,7 @@ class SampleAgent:
                 target_vars=other_agent.vars, 
                 time_step=t,
                 min_dist=0.8,
-                strength=30.0
+                strength=20.0
             )
             
             self.graph.connect(self.vars[t], factor)

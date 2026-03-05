@@ -1,7 +1,7 @@
 # nodes.py
 import numpy as np
 from typing import List
-from fg.factor_graph_ import SampleFNode, SampleVNode
+from fg.factor_graph_mppi import SampleFNode, SampleVNode
 from .obstacle import ObstacleMap
 
 class GoalSampleFNode(SampleFNode):
@@ -22,8 +22,8 @@ class GoalSampleFNode(SampleFNode):
         base_cov[1,1] = 1e-2 / self.factor_strength
         
         # 속도에 대한 분산 (큼 -> 약한 제약 -> "속도는 신경 쓰지 말고 일단 와!")
-        base_cov[2,2] = 1.0
-        base_cov[3,3] = 1.0
+        base_cov[2,2] = 0.1 
+        base_cov[3,3] = 0.1
         
         msg_cov = base_cov
         
@@ -132,7 +132,7 @@ class KinematicsFNode(SampleFNode):
         
         # (1) 속도 노이즈 주입 (가속도 불확실성 모델링)
         # 위치에는 직접 노이즈를 주지 않음!
-        acc_noise_sigma = 5.0
+        acc_noise_sigma = 1.0
         dv = np.random.randn(N, 2) * acc_noise_sigma
         
         # (2) 운동학적 적분 (Kinematic Integration)

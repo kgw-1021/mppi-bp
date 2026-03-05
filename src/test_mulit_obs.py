@@ -7,7 +7,7 @@ from motion.obstacle import ObstacleMap
 from motion.agent import SampleAgent
 
 MAX_SIM_TIME = 1000
-COMM_RANGE = 5.0 
+COMM_RANGE = 10.0 
 
 def run_simulation():
     graph = Graph()
@@ -48,7 +48,7 @@ def run_simulation():
     fig, ax = plt.subplots(figsize=(10, 10))
     writer = PillowWriter(fps=10)
 
-    with writer.saving(fig, "simulation_result_multi_obs5.gif", 100):
+    with writer.saving(fig, "simulation_result_multi_obs3.gif", 100):
         for t in range(MAX_SIM_TIME):
             # -----------------------------------------------------
             # (A) Dynamic Topology (환경/센서 역할)
