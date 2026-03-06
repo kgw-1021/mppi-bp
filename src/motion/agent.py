@@ -150,7 +150,7 @@ class SampleAgent:
         last_node = self.vars[-1]
         noise = np.random.randn(*last_node.particles.shape) * 0.1
         last_node.particles += noise
-        last_node.particles[:, 2:] *= 0.9 # 속도 감쇠
+        # last_node.particles[:, 2:] *= 0.9 # 속도 감쇠
 
     def reached_goal(self, threshold=0.1):
         """ 목표 도달 여부 확인 """
